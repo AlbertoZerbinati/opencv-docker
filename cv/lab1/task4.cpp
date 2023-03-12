@@ -4,7 +4,7 @@
 bool areArgumentsEnough(int argc, int n);
 bool areChannelsEnough(int channels, int n);
 bool isImageValid(cv::Mat& img);
-cv::Mat createSingleChannelImage(int channel, cv::Mat& img);
+cv::Mat createSingleChannelImage(int channel, const cv::Mat& img);
 
 int main(int argc, char** argv) {
     if (!areArgumentsEnough(argc, 2)) {
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
 bool areArgumentsEnough(int argc, int n) { return argc >= n; }
 bool areChannelsEnough(int channels, int n) { return channels >= n; }
 bool isImageValid(cv::Mat& img) { return img.data != NULL; }
-cv::Mat createSingleChannelImage(int channel, cv::Mat& img) {
+cv::Mat createSingleChannelImage(int channel, const cv::Mat& img) {
     cv::Mat ret = cv::Mat(img.rows, img.cols, img.type());
 
     for (int i = 0; i < img.rows; ++i) {
