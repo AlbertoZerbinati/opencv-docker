@@ -1,0 +1,50 @@
+#include <iostream>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include "include/lab2.hpp"
+
+bool areArgumentsEnough(int argc, int n);
+bool isImageValid(const cv::Mat& img);
+void showImage(const cv::Mat& img, std::string windowName);
+
+int main(int argc, char** argv) {
+    if (!areArgumentsEnough(argc, 2)) {
+        std::cout << "\nusage: task1.exe <img_path>\n";
+        return 1;
+    }
+
+    // IMREAD_UNCHANGED is needed to read the image correctly with 1 channel.
+    // Indeed by deafault imread uses IMREAD_COLOR, which uses 3 channels. It
+    //   uses the single channel value copied to the other two channels.
+    // Then if I have a Vec3b pixel and read it as uchar, I get impredictable
+    //   behavior. Same if I had a uchar and read it as Vec3b.
+    cv::Mat img = cv::imread(argv[1], cv::IMREAD_UNCHANGED);
+    if (!isImageValid(img)) {
+        std::cout << "\n" << argv[1] << " is not a vaild path for an image\n";
+        return 1;
+    }
+
+    // int nChannels = img.channels();
+    // std::cout << "\nthe image has " << nChannels << " channels\n";
+
+    showImage(img, "b&w img");
+
+    // best value to hide black cables
+    int kernelSize = 5;
+    cv::Mat minFiltered = minFilter(img, kernelSize);
+    cv::Mat maxFiltered = maxFilter(img, kernelSize);
+
+    showImage(minFiltered, "min filter " + std::to_string(kernelSize));
+    showImage(maxFiltered, "max filter " + std::to_string(kernelSize));
+
+    cv::waitKey(0);
+    return 0;
+}
+
+bool areArgumentsEnough(int argc, int n) { return argc >= n; }
+bool isImageValid(const cv::Mat& img) { return img.data != NULL; }
+void showImage(const cv::Mat& img, std::string windowName) {
+    cv::namedWindow(windowName);
+    cv::imshow(windowName, img);
+}
