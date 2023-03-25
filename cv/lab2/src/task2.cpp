@@ -2,15 +2,13 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "include/lab2.hpp"
+#include "../include/lab2.hpp"
 
-bool areArgumentsEnough(int argc, int n);
-bool isImageValid(const cv::Mat& img);
-void showImage(const cv::Mat& img, std::string windowName);
+using namespace lab2;
 
 int main(int argc, char** argv) {
-    if (!areArgumentsEnough(argc, 2)) {
-        std::cout << "\nusage: task1.exe <img_path>\n";
+    if (!areArgumentsEnough(argc, 3)) {
+        std::cout << "\nusage: task2.exe <img_path> <kernel_size>\n";
         return 1;
     }
 
@@ -25,13 +23,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // int nChannels = img.channels();
-    // std::cout << "\nthe image has " << nChannels << " channels\n";
-
     showImage(img, "b&w img");
 
-    // best value to hide black cables
-    int kernelSize = 5;
+    int kernelSize = atoi(argv[2]);
     cv::Mat minFiltered = minFilter(img, kernelSize);
     cv::Mat maxFiltered = maxFilter(img, kernelSize);
 
@@ -40,11 +34,4 @@ int main(int argc, char** argv) {
 
     cv::waitKey(0);
     return 0;
-}
-
-bool areArgumentsEnough(int argc, int n) { return argc >= n; }
-bool isImageValid(const cv::Mat& img) { return img.data != NULL; }
-void showImage(const cv::Mat& img, std::string windowName) {
-    cv::namedWindow(windowName);
-    cv::imshow(windowName, img);
 }
