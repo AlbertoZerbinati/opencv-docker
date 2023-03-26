@@ -1,11 +1,13 @@
+#include <iostream>
+
 #include "sgm.h"
 
-
-
-int main(int argc, char** argv) {
-
+int main(int argc, char **argv) {
     if (argc != 6) {
-        cerr << "Usage: " << argv[0] << " <right image> <left image> <gt depth map> <output image file> <disparity range> " << endl;
+        std::cerr << "Usage: " << argv[0]
+                  << " <right image> <left image> <gt depth map> <output image "
+                     "file> <disparity range> "
+                  << endl;
         return -1;
     }
 
@@ -21,20 +23,19 @@ int main(int argc, char** argv) {
     secondImage = cv::imread(secondFileName, IMREAD_GRAYSCALE);
     gt = cv::imread(gtFileName, IMREAD_GRAYSCALE);
 
-    if(!firstImage.data || !secondImage.data) {
-        cerr <<  "Could not open or find one of the images!" << endl;
+    if (!firstImage.data || !secondImage.data) {
+        cerr << "Could not open or find one of the images!" << endl;
         return -1;
     }
 
     unsigned int disparityRange = atoi(argv[5]);
-
 
     sgm::SGM sgm(disparityRange);
     sgm.set(firstImage, secondImage);
     sgm.compute_disparity();
     sgm.save_disparity(outputFileName);
 
-    std::cerr<<"Right Image MSE error: "<<sgm.compute_mse(gt)<<std::endl;
+    std::cout << "Right Image MSE error: " << sgm.compute_mse(gt) << std::endl;
 
     return 0;
 }
