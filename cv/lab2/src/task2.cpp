@@ -12,11 +12,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // IMREAD_UNCHANGED is needed to read the image correctly with 1 channel.
-    // Indeed by deafault imread uses IMREAD_COLOR, which uses 3 channels. It
-    //   uses the single channel value copied to the other two channels.
-    // Then if I have a Vec3b pixel and read it as uchar, I get impredictable
-    //   behavior. Same if I had a uchar and read it as Vec3b.
+    // IMREAD_UNCHANGED flag is needed to read the image correctly with 1
+    // channel. Indeed by default imread uses IMREAD_COLOR, which uses 3
+    // channels. It uses the single channel value copied to the other two
+    // channels. Then if I have a Vec3b pixel and read it as uchar, I get
+    // impredictable behavior. Same if I had a uchar and read it as Vec3b.
     cv::Mat img = cv::imread(argv[1], cv::IMREAD_UNCHANGED);
     if (!isImageValid(img)) {
         std::cout << "\n" << argv[1] << " is not a vaild path for an image\n";

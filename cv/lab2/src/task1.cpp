@@ -1,3 +1,6 @@
+#include <sys/stat.h>
+#include <sys/types.h>
+
 #include <iostream>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -20,8 +23,9 @@ int main(int argc, char** argv) {
 
     showImage(img, "original img");
 
-    cv::Mat greyScaledImg = convertToGreyScale(img);
-    cv::imwrite("asset/grayscale_image.jpg", greyScaledImg);
+    cv::Mat grayScaledImg = convertToGreyScale(img);
+    mkdir("../asset", 0777); // create output dir, if not present
+    cv::imwrite("../asset/image_grayscale.jpg", grayScaledImg);
 
     cv::waitKey(0);
     return 0;
