@@ -15,7 +15,6 @@ typedef vector<ul_array2D> ul_array3D;
 typedef vector<ul_array3D> ul_array4D;
 
 namespace sgm {
-
 struct path {
     int direction_x;
     int direction_y;

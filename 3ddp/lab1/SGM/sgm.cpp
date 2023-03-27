@@ -176,28 +176,70 @@ void SGM::aggregation() {
         int dir_x = paths_[cur_path].direction_x;
         int dir_y = paths_[cur_path].direction_y;
 
+        // TO DO: initialize the variables start_x, start_y, end_x, end_y,
+        // step_x, step_y with the right values
+
         int start_x, start_y, end_x, end_y, step_x, step_y;
 
-        // TO DO: initialize the variables start_x, start_y, end_x, end_y,
-        // step_x, step_y with the right values after that uncomment the code
-        // below
+        // // compute for all pixels in the image
+        // for (int row = 0; row < height_; ++row) {
+        //     for (int col = 0; col < width_; ++col) {
+        //         // the end position is given by the current pixel
+        //         end_x = col;
+        //         end_y = row;
 
-        //      for(int y = start_y; y != end_y ; y+=step_y)
-        //      {
-        //        for(int x = start_x; x != end_x ; x+=step_x)
-        //        {
-        //          compute_path_cost(dir_y, dir_x, y, x, cur_path);
-        //        }
-        //      }
+        //         // the steps are encoded in the directions of the path
+        //         step_x = dir_x;
+        //         step_y = dir_y;
+
+        //         if (dir_x == -1 && dir_y == -1) {
+        //             start_x = ;
+        //             start_y = ;
+        //         } else if (dir_x == -1 && dir_y == 0) {
+        //             start_x = ;
+        //             start_y = end_y;
+        //         } else if (dir_x == -1 && dir_y == 1) {
+        //             start_x = ;
+        //             start_y = ;
+        //         } else if (dir_x == 0 && dir_y == -1) {
+        //             start_x = end_x;
+        //             start_y = ;
+        //         } else if (dir_x == 0 && dir_y == 1) {
+        //             start_x = ;
+        //             start_y = ;
+        //         } else if (dir_x == 1 && dir_y == -1) {
+        //             start_x = ;
+        //             start_y = ;
+        //         } else if (dir_x == 1 && dir_y == 0) {
+        //             start_x = ;
+        //             start_y = end_y;
+        //         } else {  // 1, 1
+        //             start_x = ;
+        //             start_y = ;
+        //         }
+
+        for (int y = start_y; y != end_y; y += step_y) {
+            for (int x = start_x; x != end_x; x += step_x) {
+                // it doesn't make sense that we stop when one is
+                // finished. they may not be aligned and the x might
+                // reach the end before, but this doesn't mean that we
+                // are done. we should just stop updating x at that
+                // point
+                compute_path_cost(dir_y, dir_x, y, x, cur_path);
+            }
+            // }
+            // }
+        }
     }
-
-    // TO DO: aggregate the costs for all direction into the aggr_cost_ tensor
+    // TO DO: aggregate the costs for all direction into the aggr_cost_
+    // tensor aggr_cost_[x][y][d] = cost_[x][y][d]
+    //         + sum(path_cost[path][x][y][d] for path in paths_);
 }
 
 // TO COMPLETE: compute final costs per path
 void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
                             int cur_x, int cur_path) {
-    // use this variables if needed
+    // use these variables if needed
     unsigned long prev_cost;
     unsigned long best_prev_cost;
     unsigned long no_penalty_cost;
@@ -209,11 +251,12 @@ void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
     if (cur_y == pw_.north || cur_y == pw_.south || cur_x == pw_.east ||
         cur_x == pw_.west) {
         // Please fill me!
-    }
-
-    else {
+    } else {
         // Please fill me!
     }
+
+    // The output should be stored in path_cost_[cur_path][cur_y][cur_x][d],
+    // for all possible d.
 }
 
 float SGM::compute_mse(const cv::Mat &gt) {
