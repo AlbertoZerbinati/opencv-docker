@@ -1,2 +1,4 @@
 # asset
 *.exe
+.DS_Store
+*.zip
