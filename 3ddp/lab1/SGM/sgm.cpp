@@ -83,7 +83,9 @@ void SGM::compute_disparity() {
             unsigned long smallest_cost = aggr_cost_[row][col][0];
             int smallest_disparity = 0;
             for (int d = disparity_range_ - 1; d >= 0; --d) {
+                // std::cout << aggr_cost_[row][col][d] << std::endl;
                 if (aggr_cost_[row][col][d] < smallest_cost) {
+                    // std::cout << "dentro!!";
                     smallest_cost = aggr_cost_[row][col][d];
                     smallest_disparity = d;
                 }
@@ -171,8 +173,17 @@ void SGM::calculate_cost_hamming() {
 
 // TO COMPLETE: aggregate the costs
 void SGM::aggregation() {
+    // std::cout << pw_.north << "\n";  // 1
+    // std::cout << pw_.south << "\n";  // 369
+    // std::cout << pw_.east << "\n";   // 424
+    // std::cout << pw_.west << "\n";   // 1
+
+    // std::cout << height_ << "\n";  // 370
+    // std::cout << width_ << "\n";   // 425
+
     // for all defined paths
     for (int cur_path = 0; cur_path < PATHS_PER_SCAN; ++cur_path) {
+        // std::cout << "path" << cur_path << std::endl;
         int dir_x = paths_[cur_path].direction_x;
         int dir_y = paths_[cur_path].direction_y;
 
@@ -181,82 +192,120 @@ void SGM::aggregation() {
 
         int start_x, start_y, end_x, end_y, step_x, step_y;
 
-        // // compute for all pixels in the image
-        // for (int row = 0; row < height_; ++row) {
-        //     for (int col = 0; col < width_; ++col) {
-        //         // the end position is given by the current pixel
-        //         end_x = col;
-        //         end_y = row;
-
-        //         // the steps are encoded in the directions of the path
-        //         step_x = dir_x;
-        //         step_y = dir_y;
-
-        //         if (dir_x == -1 && dir_y == -1) {
-        //             start_x = ;
-        //             start_y = ;
-        //         } else if (dir_x == -1 && dir_y == 0) {
-        //             start_x = ;
-        //             start_y = end_y;
-        //         } else if (dir_x == -1 && dir_y == 1) {
-        //             start_x = ;
-        //             start_y = ;
-        //         } else if (dir_x == 0 && dir_y == -1) {
-        //             start_x = end_x;
-        //             start_y = ;
-        //         } else if (dir_x == 0 && dir_y == 1) {
-        //             start_x = ;
-        //             start_y = ;
-        //         } else if (dir_x == 1 && dir_y == -1) {
-        //             start_x = ;
-        //             start_y = ;
-        //         } else if (dir_x == 1 && dir_y == 0) {
-        //             start_x = ;
-        //             start_y = end_y;
-        //         } else {  // 1, 1
-        //             start_x = ;
-        //             start_y = ;
-        //         }
+        // compute the aggregated cost, in a given direction, for all pixels in
+        // the image in the same pass (double for, below)
+        if (dir_x == 1) {
+            start_x = pw_.west;
+            end_x = pw_.east + 1;
+            step_x = 1;
+        } else if (dir_x == -1) {
+            start_x = pw_.east;
+            end_x = pw_.west - 1;
+            step_x = -1;
+        } else {
+            // dir_x == 0
+            start_x = pw_.west;
+            end_x = pw_.east + 1;
+            step_x = 1;  // west < east
+        }
+        if (dir_y == 1) {
+            start_y = pw_.north;
+            end_y = pw_.south + 1;
+            step_y = 1;
+        } else if (dir_y == -1) {
+            start_y = pw_.south;
+            end_y = pw_.north - 1;
+            step_y = -1;
+        } else {
+            // dir_y == 0
+            start_y = pw_.north;
+            end_y = pw_.south + 1;
+            step_y = 1;  // north < south
+        }
 
         for (int y = start_y; y != end_y; y += step_y) {
             for (int x = start_x; x != end_x; x += step_x) {
-                // it doesn't make sense that we stop when one is
-                // finished. they may not be aligned and the x might
-                // reach the end before, but this doesn't mean that we
-                // are done. we should just stop updating x at that
-                // point
                 compute_path_cost(dir_y, dir_x, y, x, cur_path);
             }
-            // }
-            // }
         }
     }
     // TO DO: aggregate the costs for all direction into the aggr_cost_
-    // tensor aggr_cost_[x][y][d] = cost_[x][y][d]
-    //         + sum(path_cost[path][x][y][d] for path in paths_);
+    // tensor
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            for (int d = 0; d < disparity_range_; ++d) {
+                aggr_cost_[y][x][d] = 0;
+                // isn't this considering the data cost too many times?
+                for (int path = 0; path < PATHS_PER_SCAN; ++path) {
+                    aggr_cost_[y][x][d] += path_cost_[path][y][x][d];
+                }
+            }
+        }
+    }
 }
 
 // TO COMPLETE: compute final costs per path
 void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
                             int cur_x, int cur_path) {
+    // std::cout << "(" << cur_x << ", " << cur_y << ")"
+    //           << " -- dir: " << direction_x << " " << direction_y <<
+    //           std::endl;
     // use these variables if needed
-    unsigned long prev_cost;
-    unsigned long best_prev_cost;
-    unsigned long no_penalty_cost;
-    unsigned long penalty_cost;
-    unsigned long small_penalty_cost;
-    unsigned long big_penalty_cost;
+    // unsigned long prev_cost;
+    // unsigned long penalty_cost;
+    // if (cur_path == 7)
+    // std::cout << cur_x << " " << cur_y << std::endl;
 
     // if the processed pixel is the first:
-    if (cur_y == pw_.north || cur_y == pw_.south || cur_x == pw_.east ||
-        cur_x == pw_.west) {
+    if ((cur_y == pw_.north && direction_y == 1) ||
+        (cur_y == pw_.south && direction_y == -1) ||
+        (cur_x == pw_.east && direction_x == -1) ||
+        (cur_x == pw_.west && direction_x == 1)) {
         // Please fill me!
+
+        // no smoothness cost, only data cost
+        for (int d = 0; d < disparity_range_; ++d) {
+            path_cost_[cur_path][cur_y][cur_x][d] = cost_[cur_y][cur_x][d];
+        }
     } else {
         // Please fill me!
-    }
 
-    // The output should be stored in path_cost_[cur_path][cur_y][cur_x][d],
-    // for all possible d.
+        // prev is the previous pixel along cur_path. We compute some useful
+        // values.
+        int prev_x = cur_x - direction_x;
+        int prev_y = cur_y - direction_y;
+        unsigned long best_prev_cost = INFINITY;
+        for (int d = 0; d < disparity_range_; d++) {
+            unsigned long cost = path_cost_[cur_path][prev_y][prev_x][d];
+            if (cost < best_prev_cost) {
+                best_prev_cost = cost;
+            }
+        }
+        for (int d = 0; d < disparity_range_; ++d) {
+            unsigned long no_penalty_cost;
+            unsigned long small_penalty_cost_1;
+            unsigned long small_penalty_cost_2;
+            unsigned long big_penalty_cost;
+
+            // possible disparities, find the min
+            no_penalty_cost = path_cost_[cur_path][prev_y][prev_x][d];
+            small_penalty_cost_1 =
+                d > 0 ? path_cost_[cur_path][prev_y][prev_x][d - 1] + p1_
+                      : INFINITY;
+            small_penalty_cost_2 =
+                d < disparity_range_ - 1
+                    ? path_cost_[cur_path][prev_y][prev_x][d + 1] + p1_
+                    : INFINITY;
+            big_penalty_cost = best_prev_cost + p2_;  // best tranne 0, +- 1???
+
+            unsigned long min =
+                std::min({no_penalty_cost, small_penalty_cost_1,
+                          small_penalty_cost_2, big_penalty_cost});
+
+            path_cost_[cur_path][cur_y][cur_x][d] =
+                cost_[cur_y][cur_x][d] + min - best_prev_cost;
+        }
+    }
 }
 
 float SGM::compute_mse(const cv::Mat &gt) {
