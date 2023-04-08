@@ -251,7 +251,7 @@ void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
         // prev is the previous pixel along cur_path
         int prev_x = cur_x - direction_x;
         int prev_y = cur_y - direction_y;
-        unsigned long best_prev_cost = INFINITY;
+        unsigned long best_prev_cost = LLONG_MAX;
         for (int d = 0; d < disparity_range_; d++) {
             unsigned long cost = path_cost_[cur_path][prev_y][prev_x][d];
             if (cost < best_prev_cost) {
@@ -268,12 +268,12 @@ void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
             no_penalty_cost = path_cost_[cur_path][prev_y][prev_x][d];
             small_penalty_cost_1 =
                 d > 0 ? path_cost_[cur_path][prev_y][prev_x][d - 1] + p1_
-                      : INFINITY;
+                      : LLONG_MAX;
             small_penalty_cost_2 =
                 d < disparity_range_ - 1
                     ? path_cost_[cur_path][prev_y][prev_x][d + 1] + p1_
-                    : INFINITY;
-            big_penalty_cost = best_prev_cost + p2_;  // best tranne 0, +- 1???
+                    : LLONG_MAX;
+            big_penalty_cost = best_prev_cost + p2_;
 
             unsigned long min =
                 std::min({no_penalty_cost, small_penalty_cost_1,
