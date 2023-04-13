@@ -169,20 +169,16 @@ void SGM::calculate_cost_hamming() {
     }
 }
 
-// TO COMPLETE: aggregate the costs
+// aggregate the costs
 void SGM::aggregation() {
     // for all defined paths
     for (int cur_path = 0; cur_path < PATHS_PER_SCAN; ++cur_path) {
         int dir_x = paths_[cur_path].direction_x;
         int dir_y = paths_[cur_path].direction_y;
 
-        // TO DO: initialize the variables start_x, start_y, end_x, end_y,
-        // step_x, step_y with the right values
-
         int start_x, start_y, end_x, end_y, step_x, step_y;
 
-        // compute the aggregated cost in a given direction, for all pixels in
-        // the image in the same pass (double for, below)
+        // initialize variables with the right values
         if (dir_x == 1) {
             start_x = pw_.west;
             end_x = pw_.east + 1;
@@ -212,6 +208,7 @@ void SGM::aggregation() {
             step_y = 1;  // north < south
         }
 
+        // compute the path cost in a given direction for all pixels
         for (int y = start_y; y != end_y; y += step_y) {
             for (int x = start_x; x != end_x; x += step_x) {
                 compute_path_cost(dir_y, dir_x, y, x, cur_path);
@@ -231,23 +228,19 @@ void SGM::aggregation() {
     }
 }
 
-// TO COMPLETE: compute final costs per path
+// compute cost per path of a pixel
 void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
                             int cur_x, int cur_path) {
-    // if the processed pixel is the first:
+    // if the processed pixel is the first
     if ((cur_y == pw_.north && direction_y == 1) ||
         (cur_y == pw_.south && direction_y == -1) ||
         (cur_x == pw_.east && direction_x == -1) ||
         (cur_x == pw_.west && direction_x == 1)) {
-        // Please fill me!
-
         // no smoothness cost, only data cost
         for (int d = 0; d < disparity_range_; ++d) {
             path_cost_[cur_path][cur_y][cur_x][d] = cost_[cur_y][cur_x][d];
         }
     } else {
-        // Please fill me!
-
         // prev is the previous pixel along cur_path
         int prev_x = cur_x - direction_x;
         int prev_y = cur_y - direction_y;
@@ -258,6 +251,7 @@ void SGM::compute_path_cost(int direction_y, int direction_x, int cur_y,
                 best_prev_cost = cost;
             }
         }
+
         for (int d = 0; d < disparity_range_; ++d) {
             unsigned long no_penalty_cost;
             unsigned long small_penalty_cost_1;
