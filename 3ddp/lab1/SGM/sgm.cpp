@@ -215,13 +215,14 @@ void SGM::aggregation() {
             }
         }
     }
-    // TO DO: aggregate the costs for all direction into the aggr_cost_ tensor
+    // aggregate the costs for all direction into the aggr_cost_ tensor
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             for (int d = 0; d < disparity_range_; ++d) {
-                aggr_cost_[y][x][d] = 0;
+                aggr_cost_[y][x][d] = cost_[y][x][d];  // data term
                 for (int path = 0; path < PATHS_PER_SCAN; ++path) {
-                    aggr_cost_[y][x][d] += path_cost_[path][y][x][d];
+                    aggr_cost_[y][x][d] += path_cost_[path][y][x][d] -
+                                           cost_[y][x][d];  // smoothness term
                 }
             }
         }
