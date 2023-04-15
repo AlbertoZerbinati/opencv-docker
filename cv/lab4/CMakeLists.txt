@@ -13,8 +13,8 @@ target_link_libraries(task1.exe ${OpenCV_LIBS} lab4)
 add_executable(task2.exe src/task2.cpp)
 target_link_libraries(task2.exe ${OpenCV_LIBS} lab4)
 
-# add_executable(task3.exe src/task3.cpp)
-# target_link_libraries(task3.exe ${OpenCV_LIBS})
+add_executable(task3.exe src/task3.cpp)
+target_link_libraries(task3.exe ${OpenCV_LIBS} lab4)
 
-# add_executable(task4.exe src/task4.cpp)
-# target_link_libraries(task4.exe ${OpenCV_LIBS})
+add_executable(task4.exe src/task4.cpp)
+target_link_libraries(task4.exe ${OpenCV_LIBS} lab4)
