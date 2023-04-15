@@ -32,16 +32,16 @@ int main(int argc, char** argv) {
     // get hough circles
     cv::Mat hough = img.clone();
     std::vector<cv::Vec3f> circles;
-    HoughCircles(canny, circles, cv::HOUGH_GRADIENT, 2, smooth.rows / 2, 60,
-                 30, 6, 8);
+    cv::HoughCircles(canny, circles, cv::HOUGH_GRADIENT, 2, smooth.rows / 2, 60,
+                     30, 6, 8);
 
     // draw circles
     for (size_t i = 0; i < circles.size(); ++i) {
         cv::Vec3i c = circles[i];
         cv::Point center = cv::Point(c[0], c[1]);
         int radius = c[2];
-        circle(hough, center, radius, cv::Scalar(0, 255, 0), cv::FILLED,
-               cv::LINE_AA);
+        cv::circle(hough, center, radius, cv::Scalar(0, 0, 255), cv::FILLED,
+                   cv::LINE_AA);
     }
 
     showImage(hough, "Hough Circles");
