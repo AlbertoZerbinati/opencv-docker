@@ -1,6 +1,6 @@
 # asset
 *.exe
-*/.DS_Store
+.DS_Store
 *.zip
 .vscode
 sgm
