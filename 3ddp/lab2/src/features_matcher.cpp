@@ -25,7 +25,7 @@ void FeatureMatcher::extractFeatures() {
     descriptors_.resize(images_names_.size());
     feats_colors_.resize(images_names_.size());
 
-    auto orb_detector = cv::ORB::create(10000, 1.2, 8);
+    auto detector = cv::ORB::create(10000, 1.2, 8);
 
     for (int i = 0; i < images_names_.size(); i++) {
         std::cout << "Computing descriptors for image " << i << std::endl;
