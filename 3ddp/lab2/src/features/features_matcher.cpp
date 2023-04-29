@@ -12,14 +12,6 @@ FeatureMatcher::FeatureMatcher(cv::Mat intrinsics_matrix, cv::Mat dist_coeffs,
     new_intrinsics_matrix_.at<double>(1, 1) *= focal_scale;
 }
 
-cv::Mat FeatureMatcher::readUndistortedImage(const std::string &filename) {
-    cv::Mat img = cv::imread(filename), und_img, dbg_img;
-    cv::undistort(img, und_img, intrinsics_matrix_, dist_coeffs_,
-                  new_intrinsics_matrix_);
-
-    return und_img;
-}
-
 void FeatureMatcher::extractFeatures() {
     features_.resize(images_names_.size());
     descriptors_.resize(images_names_.size());
@@ -221,6 +213,23 @@ void FeatureMatcher::testMatches(double scale) {
     }
 }
 
+void FeatureMatcher::reset() {
+    point_index_.clear();
+    pose_index_.clear();
+    observations_.clear();
+    colors_.clear();
+
+    num_poses_ = num_points_ = num_observations_ = 0;
+}
+
+cv::Mat FeatureMatcher::readUndistortedImage(const std::string &filename) {
+    cv::Mat img = cv::imread(filename), und_img, dbg_img;
+    cv::undistort(img, und_img, intrinsics_matrix_, dist_coeffs_,
+                  new_intrinsics_matrix_);
+
+    return und_img;
+}
+
 void FeatureMatcher::setMatches(int pos0_id, int pos1_id,
                                 const std::vector<cv::DMatch> &matches) {
     const auto &features0 = features_[pos0_id];
@@ -305,12 +314,4 @@ void FeatureMatcher::setMatches(int pos0_id, int pos1_id,
         //      point!"<<std::endl;
         //    }
     }
-}
-void FeatureMatcher::reset() {
-    point_index_.clear();
-    pose_index_.clear();
-    observations_.clear();
-    colors_.clear();
-
-    num_poses_ = num_points_ = num_observations_ = 0;
 }

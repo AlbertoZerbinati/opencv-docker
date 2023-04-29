@@ -6,7 +6,7 @@
 
 class FeatureMatcher {
    public:
-    // Constructor: it require the camera intrinsics matrix, its distortion
+    // Constructor: it requires the camera intrinsics matrix, its distortion
     // coefficients and an optional focal length scaling factor
     FeatureMatcher(cv::Mat intrinsics_matrix, cv::Mat dist_coeffs,
                    double focal_scale = 1.0);

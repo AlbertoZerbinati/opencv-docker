@@ -8,9 +8,9 @@
 int main(int argc, char **argv) {
     if (argc < 4) {
         std::cout
-            << "Usage : " << argv[0]
+            << "Usage: " << argv[0]
             << " <calibration parameters filename> <images folder filename>"
-            << "<output data file> [focal length scale]" << std::endl;
+            << " <output data file> [focal length scale]" << std::endl;
         return 0;
     }
     std::string results_file(argv[3]);
