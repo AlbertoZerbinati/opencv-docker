@@ -11,8 +11,11 @@ find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Ceres REQUIRED)
 
+include_directories(include)
+
 # Add here your source files
-set(3DP_SFM_SRCS src/io_utils.cpp src/features_matcher.cpp src/basic_sfm.cpp)
+set(3DP_SFM_SRCS
+    src/util/io_utils.cpp src/features/features_matcher.cpp src/reconstruction/basic_sfm.cpp)
 
 add_library(${PROJECT_NAME} ${3DP_SFM_SRCS})
 target_include_directories(${PROJECT_NAME} PUBLIC

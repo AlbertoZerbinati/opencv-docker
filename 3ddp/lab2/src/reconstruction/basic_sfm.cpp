@@ -1,4 +1,4 @@
-#include "basic_sfm.h"
+#include "reconstruction/basic_sfm.h"
 
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
@@ -729,13 +729,13 @@ void BasicSfM::bundleAdjustmentIter(int new_cam_idx) {
         // For each observation....
         for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
             //.. check if this observation has bem already registered (both
-            //checking camera pose and point pose)
+            // checking camera pose and point pose)
             if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
                 pts_optim_iter_[point_index_[i_obs]] > 0) {
                 //////////////////////////// Code to be completed (6/6)
                 ////////////////////////////////////
                 //... in case, add a residual block inside the Ceres solver
-                //problem.
+                // problem.
                 // You should define a suitable functor (i.e., see the
                 // ReprojectionError struct at the beginning of this file) You
                 // may try a Cauchy loss function with parameters, say,

@@ -2,7 +2,7 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
-#include "basic_sfm.h"
+#include "reconstruction/basic_sfm.h"
 
 int main(int argc, char **argv) {
     if (argc < 3) {

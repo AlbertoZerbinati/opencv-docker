@@ -2,8 +2,8 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
-#include "features_matcher.h"
-#include "io_utils.h"
+#include "features/features_matcher.h"
+#include "util/io_utils.h"
 
 int main(int argc, char **argv) {
     if (argc < 4) {
