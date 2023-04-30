@@ -119,238 +119,6 @@ void BasicSfM::readFromFile(const std::string& filename,
     fclose(fptr);
 }
 
-void BasicSfM::writeToFile(const string& filename,
-                           bool write_unoptimized) const {
-    FILE* fptr = fopen(filename.c_str(), "w");
-
-    if (fptr == NULL) {
-        cerr << "Error: unable to open file " << filename;
-        return;
-    };
-
-    if (write_unoptimized) {
-        fprintf(fptr, "%d %d %d\n", num_cam_poses_, num_points_,
-                num_observations_);
-
-        for (int i = 0; i < num_observations_; ++i) {
-            fprintf(fptr, "%d %d", cam_pose_index_[i], point_index_[i]);
-            for (int j = 0; j < 2; ++j) {
-                fprintf(fptr, " %g", observations_[2 * i + j]);
-            }
-            fprintf(fptr, "\n");
-        }
-
-        if (colors_.size() == num_points_ * 3) {
-            for (int i = 0; i < num_points_; ++i)
-                fprintf(fptr, "%d %d %d\n", colors_[i * 3], colors_[i * 3 + 1],
-                        colors_[i * 3 + 2]);
-        }
-
-        for (int i = 0; i < num_cam_poses_; ++i) {
-            const double* camera = parameters_.data() + camera_block_size_ * i;
-            for (int j = 0; j < camera_block_size_; ++j) {
-                fprintf(fptr, "%.16g\n", camera[j]);
-            }
-        }
-
-        const double* points = pointBlockPtr();
-        for (int i = 0; i < num_points_; ++i) {
-            const double* point = points + i * point_block_size_;
-            for (int j = 0; j < point_block_size_; ++j) {
-                fprintf(fptr, "%.16g\n", point[j]);
-            }
-        }
-    } else {
-        int num_cameras = 0, num_points = 0, num_observations = 0;
-
-        for (int i = 0; i < num_cam_poses_; ++i)
-            if (cam_pose_optim_iter_[i] > 0) num_cameras++;
-
-        for (int i = 0; i < num_points_; ++i)
-            if (pts_optim_iter_[i] > 0) num_points++;
-
-        for (int i = 0; i < num_observations_; ++i)
-            if (cam_pose_optim_iter_[cam_pose_index_[i]] > 0 &&
-                pts_optim_iter_[point_index_[i]] > 0)
-                num_observations++;
-
-        fprintf(fptr, "%d %d %d\n", num_cameras, num_points, num_observations);
-
-        for (int i = 0; i < num_observations_; ++i) {
-            if (cam_pose_optim_iter_[cam_pose_index_[i]] > 0 &&
-                pts_optim_iter_[point_index_[i]] > 0) {
-                fprintf(fptr, "%d %d", cam_pose_index_[i], point_index_[i]);
-                for (int j = 0; j < 2; ++j) {
-                    fprintf(fptr, " %g", observations_[2 * i + j]);
-                }
-                fprintf(fptr, "\n");
-            }
-        }
-
-        if (colors_.size() == num_points_ * 3) {
-            for (int i = 0; i < num_points_; ++i) {
-                if (pts_optim_iter_[i] > 0)
-                    fprintf(fptr, "%d %d %d\n", colors_[i * 3],
-                            colors_[i * 3 + 1], colors_[i * 3 + 2]);
-            }
-        }
-
-        for (int i = 0; i < num_cam_poses_; ++i) {
-            if (cam_pose_optim_iter_[i] > 0) {
-                const double* camera =
-                    parameters_.data() + camera_block_size_ * i;
-                for (int j = 0; j < camera_block_size_; ++j) {
-                    fprintf(fptr, "%.16g\n", camera[j]);
-                }
-            }
-        }
-
-        const double* points = pointBlockPtr();
-        for (int i = 0; i < num_points_; ++i) {
-            if (pts_optim_iter_[i] > 0) {
-                const double* point = points + i * point_block_size_;
-                for (int j = 0; j < point_block_size_; ++j) {
-                    fprintf(fptr, "%.16g\n", point[j]);
-                }
-            }
-        }
-    }
-
-    fclose(fptr);
-}
-
-// Write the problem to a PLY file for inspection in Meshlab or CloudCompare.
-void BasicSfM::writeToPLYFile(const string& filename,
-                              bool write_unoptimized) const {
-    ofstream of(filename.c_str());
-
-    int num_cameras, num_points;
-
-    if (write_unoptimized) {
-        num_cameras = num_cam_poses_;
-        num_points = num_points_;
-    } else {
-        num_cameras = 0;
-        num_points = 0;
-        for (int i = 0; i < num_cam_poses_; ++i)
-            if (cam_pose_optim_iter_[i] > 0) num_cameras++;
-
-        for (int i = 0; i < num_points_; ++i)
-            if (pts_optim_iter_[i] > 0) num_points++;
-    }
-
-    of << "ply" << '\n'
-       << "format ascii 1.0" << '\n'
-       << "element vertex " << num_cameras + num_points << '\n'
-       << "property float x" << '\n'
-       << "property float y" << '\n'
-       << "property float z" << '\n'
-       << "property uchar red" << '\n'
-       << "property uchar green" << '\n'
-       << "property uchar blue" << '\n'
-       << "end_header" << endl;
-
-    bool write_colors = (colors_.size() == num_points_ * 3);
-    if (write_unoptimized) {
-        // Export extrinsic data (i.e. camera centers) as green points.
-        double center[3];
-        for (int i = 0; i < num_cam_poses_; ++i) {
-            const double* camera = cameraBlockPtr(i);
-            cam2center(camera, center);
-            of << center[0] << ' ' << center[1] << ' ' << center[2]
-               << " 0 255 0" << '\n';
-        }
-
-        // Export the structure (i.e. 3D Points) as white points.
-        const double* points = pointBlockPtr();
-        for (int i = 0; i < num_points_; ++i) {
-            const double* point = points + i * point_block_size_;
-            for (int j = 0; j < point_block_size_; ++j) {
-                of << point[j] << ' ';
-            }
-            if (write_colors)
-                of << int(colors_[3 * i]) << " " << int(colors_[3 * i + 1])
-                   << " " << int(colors_[3 * i + 2]) << "\n";
-            else
-                of << "255 255 255\n";
-        }
-    } else {
-        // Export extrinsic data (i.e. camera centers) as green points.
-        double center[3];
-        for (int i = 0; i < num_cam_poses_; ++i) {
-            if (cam_pose_optim_iter_[i] > 0) {
-                const double* camera = cameraBlockPtr(i);
-                cam2center(camera, center);
-                of << center[0] << ' ' << center[1] << ' ' << center[2]
-                   << " 0 255 0" << '\n';
-            }
-        }
-
-        // Export the structure (i.e. 3D Points) as white points.
-        const double* points = pointBlockPtr();
-        ;
-        for (int i = 0; i < num_points_; ++i) {
-            if (pts_optim_iter_[i] > 0) {
-                const double* point = points + i * point_block_size_;
-                for (int j = 0; j < point_block_size_; ++j) {
-                    of << point[j] << ' ';
-                }
-                if (write_colors)
-                    of << int(colors_[3 * i]) << " " << int(colors_[3 * i + 1])
-                       << " " << int(colors_[3 * i + 2]) << "\n";
-                else
-                    of << "255 255 255\n";
-            }
-        }
-    }
-    of.close();
-}
-
-/* c_{w,cam} = R_{cam}'*[0 0 0]' - R_{cam}'*t_{cam} -> c_{w,cam} = -
- * R_{cam}'*t_{cam} */
-void BasicSfM::cam2center(const double* camera, double* center) const {
-    ConstVectorRef angle_axis_ref(camera, 3);
-
-    Eigen::VectorXd inverse_rotation = -angle_axis_ref;
-    ceres::AngleAxisRotatePoint(inverse_rotation.data(), camera + 3, center);
-    VectorRef(center, 3) *= -1.0;
-}
-
-/* [0 0 0]' = R_{cam}*c_{w,cam} + t_{cam} -> t_{cam} = - R_{cam}*c_{w,cam} */
-void BasicSfM::center2cam(const double* center, double* camera) const {
-    ceres::AngleAxisRotatePoint(camera, center, camera + 3);
-    VectorRef(camera + 3, 3) *= -1.0;
-}
-
-bool BasicSfM::checkCheiralityConstraint(int pos_idx, int pt_idx) {
-    double *camera = cameraBlockPtr(pos_idx), *point = pointBlockPtr(pt_idx);
-
-    double p[3];
-    ceres::AngleAxisRotatePoint(camera, point, p);
-
-    // camera[5] is the z cooordinate wrt the camera at pose pose_idx
-    p[2] += camera[5];
-    return p[2] > 0;
-}
-
-void BasicSfM::printPose(int idx) const {
-    const double* cam = cameraBlockPtr(idx);
-    std::cout << "camera[" << idx << "]" << std::endl
-              << "{" << std::endl
-              << "\t r_vec : (" << cam[0] << ", " << cam[1] << ", " << cam[2]
-              << ")" << std::endl
-              << "\t t_vec : (" << cam[3] << ", " << cam[4] << ", " << cam[5]
-              << ")" << std::endl;
-
-    std::cout << "}" << std::endl;
-}
-
-void BasicSfM::printPointParams(int idx) const {
-    const double* pt = pointBlockPtr(idx);
-    std::cout << "point[" << idx << "] : (" << pt[0] << ", " << pt[1] << ", "
-              << pt[2] << ")" << std::endl;
-}
-
 void BasicSfM::solve() {
     // Canonical camera so identity K
     cv::Mat_<double> intrinsics_matrix = cv::Mat_<double>::eye(3, 3);
@@ -427,7 +195,10 @@ void BasicSfM::solve() {
         }
         already_tested_pair(ref_cam_pose_idx, new_cam_pose_idx) = 1;
 
-        for (auto const& co_iter : cam_observation[ref_cam_pose_idx]) {
+        // For each point, if the two cameras saw it, add the respective
+        // observations.
+        for (std::pair<const int, int> co_iter :
+             cam_observation[ref_cam_pose_idx]) {
             if (cam_observation[new_cam_pose_idx].find(co_iter.first) !=
                 cam_observation[new_cam_pose_idx].end()) {
                 points0.emplace_back(observations_[2 * co_iter.second],
@@ -440,6 +211,9 @@ void BasicSfM::solve() {
                                   1]);
             }
         }
+
+        // In points0 and points1 we now have all the corresponding observations
+        // of the two cameras at hand.
 
         //////////////////////////// Code to be completed (3/6)
         ////////////////////////////////////
@@ -456,9 +230,35 @@ void BasicSfM::solve() {
         // init_t_vec; defined above and set the seed_found flag to true
         // Otherwise, test a different [ref_cam_pose_idx, new_cam_pose_idx] pair
         // (while( !seed_found ) loop) The dummy condition here:
-        if (true) seed_found = true;
+        // if (true) seed_found = true;
         // should be replaced with the criteria described above
         /////////////////////////////////////////////////////////////////////////////////////////
+        cv::Mat essential_matrix;
+
+        cv::findHomography(points0, points1, cv::RANSAC, 0.001, inlier_mask_H);
+        essential_matrix =
+            cv::findEssentialMat(points0, points1, intrinsics_matrix,
+                                 cv::RANSAC, 0.999, 0.001, inlier_mask_E);
+
+        int num_inliers_H = cv::countNonZero(inlier_mask_H);
+        int num_inliers_E = cv::countNonZero(inlier_mask_E);
+
+        // Check if the transformation is better explained by E than H.
+        if (num_inliers_E > num_inliers_H) {
+            cv::Mat r, t;
+            cv::recoverPose(essential_matrix, points0, points1,
+                            intrinsics_matrix, r, t, inlier_mask_E);
+
+            // Check if the recovered transformation is mainly given by a
+            // sideward motion.
+            // TODO: also use thresholds?
+            if (abs(t.at<double>(0)) > abs(t.at<double>(2))) {
+                init_r_mat = r;
+                init_t_vec = t;
+                cv::Rodrigues(r, init_r_vec);
+                seed_found = true;
+            }
+        }
 
         /////////////////////////////////////////////////////////////////////////////////////////
     }
@@ -697,6 +497,238 @@ void BasicSfM::solve() {
             }
         }
     }
+}
+
+void BasicSfM::writeToFile(const string& filename,
+                           bool write_unoptimized) const {
+    FILE* fptr = fopen(filename.c_str(), "w");
+
+    if (fptr == NULL) {
+        cerr << "Error: unable to open file " << filename;
+        return;
+    };
+
+    if (write_unoptimized) {
+        fprintf(fptr, "%d %d %d\n", num_cam_poses_, num_points_,
+                num_observations_);
+
+        for (int i = 0; i < num_observations_; ++i) {
+            fprintf(fptr, "%d %d", cam_pose_index_[i], point_index_[i]);
+            for (int j = 0; j < 2; ++j) {
+                fprintf(fptr, " %g", observations_[2 * i + j]);
+            }
+            fprintf(fptr, "\n");
+        }
+
+        if (colors_.size() == num_points_ * 3) {
+            for (int i = 0; i < num_points_; ++i)
+                fprintf(fptr, "%d %d %d\n", colors_[i * 3], colors_[i * 3 + 1],
+                        colors_[i * 3 + 2]);
+        }
+
+        for (int i = 0; i < num_cam_poses_; ++i) {
+            const double* camera = parameters_.data() + camera_block_size_ * i;
+            for (int j = 0; j < camera_block_size_; ++j) {
+                fprintf(fptr, "%.16g\n", camera[j]);
+            }
+        }
+
+        const double* points = pointBlockPtr();
+        for (int i = 0; i < num_points_; ++i) {
+            const double* point = points + i * point_block_size_;
+            for (int j = 0; j < point_block_size_; ++j) {
+                fprintf(fptr, "%.16g\n", point[j]);
+            }
+        }
+    } else {
+        int num_cameras = 0, num_points = 0, num_observations = 0;
+
+        for (int i = 0; i < num_cam_poses_; ++i)
+            if (cam_pose_optim_iter_[i] > 0) num_cameras++;
+
+        for (int i = 0; i < num_points_; ++i)
+            if (pts_optim_iter_[i] > 0) num_points++;
+
+        for (int i = 0; i < num_observations_; ++i)
+            if (cam_pose_optim_iter_[cam_pose_index_[i]] > 0 &&
+                pts_optim_iter_[point_index_[i]] > 0)
+                num_observations++;
+
+        fprintf(fptr, "%d %d %d\n", num_cameras, num_points, num_observations);
+
+        for (int i = 0; i < num_observations_; ++i) {
+            if (cam_pose_optim_iter_[cam_pose_index_[i]] > 0 &&
+                pts_optim_iter_[point_index_[i]] > 0) {
+                fprintf(fptr, "%d %d", cam_pose_index_[i], point_index_[i]);
+                for (int j = 0; j < 2; ++j) {
+                    fprintf(fptr, " %g", observations_[2 * i + j]);
+                }
+                fprintf(fptr, "\n");
+            }
+        }
+
+        if (colors_.size() == num_points_ * 3) {
+            for (int i = 0; i < num_points_; ++i) {
+                if (pts_optim_iter_[i] > 0)
+                    fprintf(fptr, "%d %d %d\n", colors_[i * 3],
+                            colors_[i * 3 + 1], colors_[i * 3 + 2]);
+            }
+        }
+
+        for (int i = 0; i < num_cam_poses_; ++i) {
+            if (cam_pose_optim_iter_[i] > 0) {
+                const double* camera =
+                    parameters_.data() + camera_block_size_ * i;
+                for (int j = 0; j < camera_block_size_; ++j) {
+                    fprintf(fptr, "%.16g\n", camera[j]);
+                }
+            }
+        }
+
+        const double* points = pointBlockPtr();
+        for (int i = 0; i < num_points_; ++i) {
+            if (pts_optim_iter_[i] > 0) {
+                const double* point = points + i * point_block_size_;
+                for (int j = 0; j < point_block_size_; ++j) {
+                    fprintf(fptr, "%.16g\n", point[j]);
+                }
+            }
+        }
+    }
+
+    fclose(fptr);
+}
+
+// Write the problem to a PLY file for inspection in Meshlab or CloudCompare.
+void BasicSfM::writeToPLYFile(const string& filename,
+                              bool write_unoptimized) const {
+    ofstream of(filename.c_str());
+
+    int num_cameras, num_points;
+
+    if (write_unoptimized) {
+        num_cameras = num_cam_poses_;
+        num_points = num_points_;
+    } else {
+        num_cameras = 0;
+        num_points = 0;
+        for (int i = 0; i < num_cam_poses_; ++i)
+            if (cam_pose_optim_iter_[i] > 0) num_cameras++;
+
+        for (int i = 0; i < num_points_; ++i)
+            if (pts_optim_iter_[i] > 0) num_points++;
+    }
+
+    of << "ply" << '\n'
+       << "format ascii 1.0" << '\n'
+       << "element vertex " << num_cameras + num_points << '\n'
+       << "property float x" << '\n'
+       << "property float y" << '\n'
+       << "property float z" << '\n'
+       << "property uchar red" << '\n'
+       << "property uchar green" << '\n'
+       << "property uchar blue" << '\n'
+       << "end_header" << endl;
+
+    bool write_colors = (colors_.size() == num_points_ * 3);
+    if (write_unoptimized) {
+        // Export extrinsic data (i.e. camera centers) as green points.
+        double center[3];
+        for (int i = 0; i < num_cam_poses_; ++i) {
+            const double* camera = cameraBlockPtr(i);
+            cam2center(camera, center);
+            of << center[0] << ' ' << center[1] << ' ' << center[2]
+               << " 0 255 0" << '\n';
+        }
+
+        // Export the structure (i.e. 3D Points) as white points.
+        const double* points = pointBlockPtr();
+        for (int i = 0; i < num_points_; ++i) {
+            const double* point = points + i * point_block_size_;
+            for (int j = 0; j < point_block_size_; ++j) {
+                of << point[j] << ' ';
+            }
+            if (write_colors)
+                of << int(colors_[3 * i]) << " " << int(colors_[3 * i + 1])
+                   << " " << int(colors_[3 * i + 2]) << "\n";
+            else
+                of << "255 255 255\n";
+        }
+    } else {
+        // Export extrinsic data (i.e. camera centers) as green points.
+        double center[3];
+        for (int i = 0; i < num_cam_poses_; ++i) {
+            if (cam_pose_optim_iter_[i] > 0) {
+                const double* camera = cameraBlockPtr(i);
+                cam2center(camera, center);
+                of << center[0] << ' ' << center[1] << ' ' << center[2]
+                   << " 0 255 0" << '\n';
+            }
+        }
+
+        // Export the structure (i.e. 3D Points) as white points.
+        const double* points = pointBlockPtr();
+        ;
+        for (int i = 0; i < num_points_; ++i) {
+            if (pts_optim_iter_[i] > 0) {
+                const double* point = points + i * point_block_size_;
+                for (int j = 0; j < point_block_size_; ++j) {
+                    of << point[j] << ' ';
+                }
+                if (write_colors)
+                    of << int(colors_[3 * i]) << " " << int(colors_[3 * i + 1])
+                       << " " << int(colors_[3 * i + 2]) << "\n";
+                else
+                    of << "255 255 255\n";
+            }
+        }
+    }
+    of.close();
+}
+
+/* c_{w,cam} = R_{cam}'*[0 0 0]' - R_{cam}'*t_{cam} -> c_{w,cam} = -
+ * R_{cam}'*t_{cam} */
+void BasicSfM::cam2center(const double* camera, double* center) const {
+    ConstVectorRef angle_axis_ref(camera, 3);
+
+    Eigen::VectorXd inverse_rotation = -angle_axis_ref;
+    ceres::AngleAxisRotatePoint(inverse_rotation.data(), camera + 3, center);
+    VectorRef(center, 3) *= -1.0;
+}
+
+/* [0 0 0]' = R_{cam}*c_{w,cam} + t_{cam} -> t_{cam} = - R_{cam}*c_{w,cam} */
+void BasicSfM::center2cam(const double* center, double* camera) const {
+    ceres::AngleAxisRotatePoint(camera, center, camera + 3);
+    VectorRef(camera + 3, 3) *= -1.0;
+}
+
+bool BasicSfM::checkCheiralityConstraint(int pos_idx, int pt_idx) {
+    double *camera = cameraBlockPtr(pos_idx), *point = pointBlockPtr(pt_idx);
+
+    double p[3];
+    ceres::AngleAxisRotatePoint(camera, point, p);
+
+    // camera[5] is the z cooordinate wrt the camera at pose pose_idx
+    p[2] += camera[5];
+    return p[2] > 0;
+}
+
+void BasicSfM::printPose(int idx) const {
+    const double* cam = cameraBlockPtr(idx);
+    std::cout << "camera[" << idx << "]" << std::endl
+              << "{" << std::endl
+              << "\t r_vec : (" << cam[0] << ", " << cam[1] << ", " << cam[2]
+              << ")" << std::endl
+              << "\t t_vec : (" << cam[3] << ", " << cam[4] << ", " << cam[5]
+              << ")" << std::endl;
+
+    std::cout << "}" << std::endl;
+}
+
+void BasicSfM::printPointParams(int idx) const {
+    const double* pt = pointBlockPtr(idx);
+    std::cout << "point[" << idx << "] : (" << pt[0] << ", " << pt[1] << ", "
+              << pt[2] << ")" << std::endl;
 }
 
 void BasicSfM::initCamParams(int new_pose_idx, cv::Mat r_vec, cv::Mat t_vec) {
