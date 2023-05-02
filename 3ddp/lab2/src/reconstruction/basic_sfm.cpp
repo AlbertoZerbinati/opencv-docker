@@ -456,9 +456,28 @@ void BasicSfM::solve() {
         // init_t_vec; defined above and set the seed_found flag to true
         // Otherwise, test a different [ref_cam_pose_idx, new_cam_pose_idx] pair
         // (while( !seed_found ) loop) The dummy condition here:
-        if (true) seed_found = true;
+
+        //---> if (true) seed_found = true;
+
         // should be replaced with the criteria described above
         /////////////////////////////////////////////////////////////////////////////////////////
+        cv::Mat H = cv::findHomography(points0, points1, cv::RANSAC, 3,
+                               inlier_mask_H);
+        cv::Mat E = cv::findEssentialMat(points0, points1, intrinsics_matrix,
+                                 cv::RANSAC, 0.999, 1.0, inlier_mask_E);
+        int diff = 0;
+        for(int id_match = 0; id_match < points0.size(); id_match++){
+                if(inlier_mask_E.at<uchar>(id_match)){
+                    ++diff;
+                                }
+                if(inlier_mask_H.at<uchar>(id_match)){
+                    --diff;
+                                }
+            }
+        if(diff < 0) continue;
+        int n_good = cv::recoverPose(E, points0, points1,intrinsic_matrix,init_r_mat,init_t_vec);
+        cv::Rodrigues(init_r_mat,init_r_vec);
+        
 
         /////////////////////////////////////////////////////////////////////////////////////////
     }

@@ -43,7 +43,7 @@ void FeatureMatcher::extractFeatures() {
             colors.push_back(color);
         }
         feats_colors_[i] = colors;
-        cv::Ptr<cv::AKAZE> detector = cv::AKAZE::create();
+        // cv::Ptr<cv::AKAZE> detector = cv::AKAZE::create();
         /////////////////////////////////////////////////////////////////////////////////////////
     }
 }
@@ -70,9 +70,9 @@ void FeatureMatcher::exhaustiveMatching() {
             // (say <= 5 matches) In case of success, set the matches with the
             // function: setMatches( i, j, inlier_matches);
             /////////////////////////////////////////////////////////////////////////////////////////
-            // matcher initialization: because AKAZE matcher is used,
+            // matcher initialization: if AKAZE matcher is used then NORM_L2,
             // NORM_HAMMING is used as normType, as suggested in OpenCV doc
-            cv::Ptr<cv::BFMatcher> matcher = cv::BFMatcher::create(cv::NORM_L2);
+            cv::Ptr<cv::BFMatcher> matcher = cv::BFMatcher::create(cv::NORM_HAMMING);
 
             // matches are computed and their relative points are stored in
             // their relative data structure
