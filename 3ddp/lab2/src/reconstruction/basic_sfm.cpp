@@ -515,7 +515,14 @@ void BasicSfM::solve() {
                         // pt[1] = /*X coordinate of the estimated point */;
                         // pt[2] = /*X coordinate of the estimated point */;
                         /////////////////////////////////////////////////////////////////////////////////////////
-
+                        cv::Mat_<double> rot_mat0 = cv::Mat_<double>::zeros(3, 3);
+                        cv::Mat_<double> rot_mat1 = cv::Mat_<double>::zeros(3, 3);
+                        cv::Rodrigues(cv::Mat_<double>({cam0_data[0],cam0_data[1],cam0_data[2]}), rot_mat0);
+                        cv::Rodrigues(cv::Mat_<double>({cam1_data[0],cam1_data[1],cam1_data[2]}), rot_mat1)
+                        proj_mat0(cv::Rect(0, 0, 3, 3)) = cv::Mat_<double>(rot_mat0);
+                        proj_mat0(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>({cam0_data[3],cam0_data[4],cam0_data[5]});
+                        proj_mat1(cv::Rect(0, 0, 3, 3)) = cv::Mat_<double>(rot_mat1);
+                        proj_mat1(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>({cam1_data[3],cam1_data[4],cam1_data[5]});
                         cv::Matx34d cam0_pose(cam0_data[0], cam0_data[1],
                                               cam0_data[2], cam0_data[3],
                                               cam0_data[4], cam0_data[5]);
@@ -540,7 +547,7 @@ void BasicSfM::solve() {
 
                         // Triangulate the point using the two camera poses
                         cv::Mat_<double> point_homog;
-                        cv::triangulatePoints(cam0_pose, cam1_pose, obs0, obs1,
+                        cv::triangulatePoints(proj_mat0, proj_mat1, obs0, obs1,
                                               point_homog);
 
                         // std::cout << point_homog << "  ";
