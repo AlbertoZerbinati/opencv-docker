@@ -222,6 +222,9 @@ void BasicSfM::solve() {
             }
         }
 
+        cout << "\n[SEED] considering ref_cam_pose_idx: " << ref_cam_pose_idx
+             << " new_cam_pose_idx: " << new_cam_pose_idx << "\n";
+
         if (max_corr < 0) {
             std::cout << "No seed pair found, exiting" << std::endl;
             return;
@@ -276,11 +279,16 @@ void BasicSfM::solve() {
         int num_inliers_H = cv::countNonZero(inlier_mask_H);
         int num_inliers_E = cv::countNonZero(inlier_mask_E);
 
+        cout << "\n[SEED] num_inliers_H: " << num_inliers_H << "\n";
+        cout << "\n[SEED] num_inliers_E: " << num_inliers_E << "\n";
+
         // Check if the transformation is better explained by E than H.
         if (num_inliers_E > num_inliers_H) {
             cv::Mat r, t;
             cv::recoverPose(essential_matrix, points0, points1,
                             intrinsics_matrix, r, t, inlier_mask_E);
+
+            cout << "\n[SEED] translation: " << t << "\n";
 
             // Check if the recovered transformation is mainly given by a
             // sideward motion.
@@ -290,6 +298,7 @@ void BasicSfM::solve() {
                 init_t_vec = t;
                 cv::Rodrigues(r, init_r_vec);
                 seed_found = true;
+                cout << "\n[SEED] found.\nR: " << r << "\nt: " << t << "\n\n";
             }
         }
 
@@ -431,7 +440,7 @@ void BasicSfM::solve() {
                 new_cam_pose_idx = i_c;
             }
         }
-        cout << max_init_pts << "\n";
+        cout << "\n max_init_pts: " << max_init_pts << "\n";
 
         std::cout << "new camera: " << new_cam_pose_idx << std::endl;
 
@@ -444,7 +453,7 @@ void BasicSfM::solve() {
             if (pts_optim_iter_[i_p] > 0 &&  // already registered points only
                 cam_observation[new_cam_pose_idx].find(i_p) !=
                     cam_observation[new_cam_pose_idx].end()) {
-                cout << ".";
+                // cout << ".";
                 double* pt = pointBlockPtr(i_p);
                 scene_pts.emplace_back(pt[0], pt[1], pt[2]);
                 img_pts.emplace_back(
@@ -515,14 +524,26 @@ void BasicSfM::solve() {
                         // pt[1] = /*X coordinate of the estimated point */;
                         // pt[2] = /*X coordinate of the estimated point */;
                         /////////////////////////////////////////////////////////////////////////////////////////
-                        cv::Mat_<double> rot_mat0 = cv::Mat_<double>::zeros(3, 3);
-                        cv::Mat_<double> rot_mat1 = cv::Mat_<double>::zeros(3, 3);
-                        cv::Rodrigues(cv::Mat_<double>({cam0_data[0],cam0_data[1],cam0_data[2]}), rot_mat0);
-                        cv::Rodrigues(cv::Mat_<double>({cam1_data[0],cam1_data[1],cam1_data[2]}), rot_mat1)
-                        proj_mat0(cv::Rect(0, 0, 3, 3)) = cv::Mat_<double>(rot_mat0);
-                        proj_mat0(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>({cam0_data[3],cam0_data[4],cam0_data[5]});
-                        proj_mat1(cv::Rect(0, 0, 3, 3)) = cv::Mat_<double>(rot_mat1);
-                        proj_mat1(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>({cam1_data[3],cam1_data[4],cam1_data[5]});
+                        cv::Mat_<double> rot_mat0 =
+                            cv::Mat_<double>::zeros(3, 3);
+                        cv::Mat_<double> rot_mat1 =
+                            cv::Mat_<double>::zeros(3, 3);
+                        cv::Rodrigues(
+                            cv::Mat_<double>(
+                                {cam0_data[0], cam0_data[1], cam0_data[2]}),
+                            rot_mat0);
+                        cv::Rodrigues(
+                            cv::Mat_<double>(
+                                {cam1_data[0], cam1_data[1], cam1_data[2]}),
+                            rot_mat1);
+                        proj_mat0(cv::Rect(0, 0, 3, 3)) =
+                            cv::Mat_<double>(rot_mat0);
+                        proj_mat0(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>(
+                            {cam0_data[3], cam0_data[4], cam0_data[5]});
+                        proj_mat1(cv::Rect(0, 0, 3, 3)) =
+                            cv::Mat_<double>(rot_mat1);
+                        proj_mat1(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>(
+                            {cam1_data[3], cam1_data[4], cam1_data[5]});
                         cv::Matx34d cam0_pose(cam0_data[0], cam0_data[1],
                                               cam0_data[2], cam0_data[3],
                                               cam0_data[4], cam0_data[5]);
@@ -554,7 +575,7 @@ void BasicSfM::solve() {
 
                         // Check the cheirality constraint for both cameras
                         if (point_homog(2) / point_homog(3) > 0.0) {
-                            cout << ",";
+                            // cout << ",";
                             // Convert from homogeneous coordinates to Euclidean
                             // coordinates
                             cv::Vec3d point(point_homog(0) / point_homog(3),
@@ -613,10 +634,11 @@ void BasicSfM::solve() {
                  fabs(pts[i * point_block_size_ + 1]) > max_dist ||
                  fabs(pts[i * point_block_size_ + 2]) > max_dist)) {
                 pts_optim_iter_[i] = -1;
-                std::cout << "rejected";  // TODO: understand why we get so many
-                                          // rejections.
+                std::cout << "rejected ";  // TODO: understand why we get so
+                                           // many rejections.
             }
         }
+        std::cout << "\n";
     }
 }
 
@@ -673,6 +695,8 @@ void BasicSfM::bundleAdjustmentIter(int new_cam_idx) {
         }
 
         Solve(options, &problem, &summary);
+        std::cout << "Bundle Adjustment iteration report:\n"
+                  << summary.FullReport() << "\n";
 
         // WARNING Here poor optimization ... :(
         // CHeck the cheirality constraint
