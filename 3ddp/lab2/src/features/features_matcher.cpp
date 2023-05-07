@@ -30,6 +30,7 @@ void FeatureMatcher::extractFeatures() {
         // also the color (i.e., the cv::Vec3b information) of each feature, and
         // store it into feats_colors_[i] vector
         /////////////////////////////////////////////////////////////////////////////////////////
+
         std::vector<cv::KeyPoint> keypoints;
         cv::Mat descriptors;
         detector->detectAndCompute(img, cv::Mat(), keypoints, descriptors);
@@ -43,7 +44,7 @@ void FeatureMatcher::extractFeatures() {
             colors.push_back(color);
         }
         feats_colors_[i] = colors;
-        cv::Ptr<cv::AKAZE> detector = cv::AKAZE::create();
+
         /////////////////////////////////////////////////////////////////////////////////////////
     }
 }
@@ -70,9 +71,11 @@ void FeatureMatcher::exhaustiveMatching() {
             // (say <= 5 matches) In case of success, set the matches with the
             // function: setMatches( i, j, inlier_matches);
             /////////////////////////////////////////////////////////////////////////////////////////
-            // matcher initialization: because AKAZE matcher is used,
+
+            // matcher initialization: if AKAZE matcher is used then NORM_L2,
             // NORM_HAMMING is used as normType, as suggested in OpenCV doc
-            cv::Ptr<cv::BFMatcher> matcher = cv::BFMatcher::create(cv::NORM_L2);
+            cv::Ptr<cv::BFMatcher> matcher =
+                cv::BFMatcher::create(cv::NORM_HAMMING);
 
             // matches are computed and their relative points are stored in
             // their relative data structure
@@ -96,7 +99,7 @@ void FeatureMatcher::exhaustiveMatching() {
              *  - CHECK IF WE ARE DEALING WITH PURE ROTATION
              *  - SET AS K MATRIX THE new_intrinsic_matrix_
              */
-            cv::findHomography(src_points, dst_points, cv::RANSAC, 3,
+            cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0,
                                inlier_mask);
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
                 if (inlier_mask.at<uchar>(id_match)) {

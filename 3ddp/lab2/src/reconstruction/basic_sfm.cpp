@@ -269,6 +269,7 @@ void BasicSfM::solve() {
         // if (true) seed_found = true;
         // should be replaced with the criteria described above
         /////////////////////////////////////////////////////////////////////////////////////////
+
         cv::Mat essential_matrix;
 
         cv::findHomography(points0, points1, cv::RANSAC, 0.001, inlier_mask_H);
