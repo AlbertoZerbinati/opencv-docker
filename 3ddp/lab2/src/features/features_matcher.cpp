@@ -26,9 +26,9 @@ void FeatureMatcher::extractFeatures() {
         //////////////////////////// Code to be completed (1/6)
         ////////////////////////////////////
         // Extract salient points + descriptors from i-th image, and store them
-        // into features_[i] and descriptors_[i] vector, respectively Extract
-        // also the color (i.e., the cv::Vec3b information) of each feature, and
-        // store it into feats_colors_[i] vector
+        // into features_[i] and descriptors_[i] vector, respectively.
+        // Extract also the color (i.e., the cv::Vec3b information) of each
+        // feature, and store it into feats_colors_[i] vector.
         /////////////////////////////////////////////////////////////////////////////////////////
 
         std::vector<cv::KeyPoint> keypoints;
@@ -61,24 +61,28 @@ void FeatureMatcher::exhaustiveMatching() {
             // Match descriptors between image i and image j, and perform
             // geometric validation, possibly discarding the outliers (remember
             // that features have been extracted from undistorted images that
-            // now has new_intrinsics_matrix_ as K matrix and no distortions) As
-            // geometric models, use both the Essential matrix and the Homograph
+            // now has new_intrinsics_matrix_ as K matrix and no distortions).
+            // As geometric models, use both the Essential matrix and the
+            // Homography
             // matrix, both by setting new_intrinsics_matrix_ as K matrix. As
             // threshold in the functions to estimate both models, you may
             // use 1.0 or similar. Store inlier matches into the inlier_matches
-            // vector Do not set matches between two images if the amount of
-            // inliers matches (i.e., geomatrically verified matches) is small
-            // (say <= 5 matches) In case of success, set the matches with the
-            // function: setMatches( i, j, inlier_matches);
+            // vector.
+            // Do not set matches between two images if the amount of inliers
+            // matches (i.e., geomatrically verified matches) is small
+            // (say <= 5 matches).
+            // In case of success, set the matches with the  function:
+            // setMatches( i, j, inlier_matches);
             /////////////////////////////////////////////////////////////////////////////////////////
 
-            // matcher initialization: if AKAZE matcher is used then NORM_L2,
-            // NORM_HAMMING is used as normType, as suggested in OpenCV doc
+            // matcher initialization: if AKAZE or SIFT matcher is used then
+            // NORM_L2, NORM_HAMMING is used as normType, as suggested in OpenCV
+            // doc.
             cv::Ptr<cv::BFMatcher> matcher =
                 cv::BFMatcher::create(cv::NORM_HAMMING);
 
-            // matches are computed and their relative points are stored in
-            // their relative data structure
+            // Matches are computed and their relative points are stored in
+            // their relative data structure.
             matcher->match(descriptors_[i], descriptors_[j], matches);
 
             std::vector<cv::Point2f> src_points;
@@ -88,17 +92,15 @@ void FeatureMatcher::exhaustiveMatching() {
                 dst_points.push_back(features_[j][match.trainIdx].pt);
             }
 
-            // definition of the data structures used to compute the inliers
+            // Definition of the data structures used to compute the inliers.
             cv::Mat inlier_mask;
             std::vector<cv::DMatch> inlier_H;
             std::vector<cv::DMatch> inlier_E;
 
-            // computation of the inliers by using homography
-            /*
-             * WE NEED TO:
-             *  - CHECK IF WE ARE DEALING WITH PURE ROTATION
-             *  - SET AS K MATRIX THE new_intrinsic_matrix_
-             */
+            // Computation of the inliers by using homography.
+            // We need to:
+            //  - check if we are dealing with pure rotation;
+            //  - se as K matrix the new_intrinsics_matrix_.
             cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0,
                                inlier_mask);
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
@@ -107,7 +109,7 @@ void FeatureMatcher::exhaustiveMatching() {
                 }
             }
 
-            // computation of the inliers by using essential
+            // Computation of the inliers by using essential.
             cv::findEssentialMat(src_points, dst_points, new_intrinsics_matrix_,
                                  cv::RANSAC, 0.999, 1.0, inlier_mask);
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
@@ -116,8 +118,8 @@ void FeatureMatcher::exhaustiveMatching() {
                 }
             }
 
-            // choose the best result, in terms of number of inliers, as final
-            // result --> 5 as threshold
+            // Choose the best result, in terms of number of inliers, as final
+            // result, using 5 as threshold.
             if (inlier_E.size() >= inlier_H.size() && inlier_E.size() > 5) {
                 std::copy(inlier_E.begin(), inlier_E.end(),
                           std::back_inserter(inlier_matches));
@@ -178,7 +180,7 @@ void FeatureMatcher::writeToFile(const std::string &filename,
 
 void FeatureMatcher::testMatches(double scale) {
     // For each pose, prepare a map that reports the pairs [point index,
-    // observation index]
+    // observation index].
     std::vector<std::map<int, int>> cam_observation(num_poses_);
     for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
         int i_cam = pose_index_[i_obs], i_pt = point_index_[i_obs];
@@ -278,7 +280,7 @@ void FeatureMatcher::setMatches(int pos0_id, int pos1_id,
 
             // Average color between two corresponding features (suboptimal
             // since we shouls also consider the other observations of the same
-            // point in the other images)
+            // point in the other images).
             cv::Vec3f color =
                 (cv::Vec3f(feats_colors_[pos0_id][match.queryIdx]) +
                  cv::Vec3f(feats_colors_[pos1_id][match.trainIdx])) /
@@ -291,7 +293,7 @@ void FeatureMatcher::setMatches(int pos0_id, int pos1_id,
             num_observations_++;
             num_observations_++;
         }
-        // New observation
+        // New observation.
         else if (pt_iter0 == point_id_map_.end()) {
             int pt_idx = point_id_map_[obs_id1];
             point_id_map_[obs_id0] = pt_idx;

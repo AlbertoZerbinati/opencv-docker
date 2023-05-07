@@ -12,10 +12,11 @@ class BasicSfM {
 
     // Read data from file, that are observations along with the ids of the
     // camera positions where the observations have been acquired and the ids of
-    // the 3D points that generate such observations) If load_initial_guess is
-    // set to true, it is assumed that the input file also includes an initial
-    // guess solution of the reconstruction problem, hence load it If
-    // load_colors is set to true, it is assumed that the input file also
+    // the 3D points that generate such observations).
+    // If load_initial_guess is set to true, it is assumed that the input file
+    // also includes an initial guess solution of the reconstruction problem,
+    // hence load it.
+    // If load_colors is set to true, it is assumed that the input file also
     // includes the RGB colors of the 3D points, hence load them
     void readFromFile(const std::string& filename,
                       bool load_initial_guess = false,
