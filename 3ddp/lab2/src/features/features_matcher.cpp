@@ -72,7 +72,8 @@ void FeatureMatcher::exhaustiveMatching() {
             /////////////////////////////////////////////////////////////////////////////////////////
             // matcher initialization: if AKAZE matcher is used then NORM_L2,
             // NORM_HAMMING is used as normType, as suggested in OpenCV doc
-            cv::Ptr<cv::BFMatcher> matcher = cv::BFMatcher::create(cv::NORM_HAMMING);
+            cv::Ptr<cv::BFMatcher> matcher =
+                cv::BFMatcher::create(cv::NORM_HAMMING);
 
             // matches are computed and their relative points are stored in
             // their relative data structure
@@ -96,7 +97,7 @@ void FeatureMatcher::exhaustiveMatching() {
              *  - CHECK IF WE ARE DEALING WITH PURE ROTATION
              *  - SET AS K MATRIX THE new_intrinsic_matrix_
              */
-            cv::findHomography(src_points, dst_points, cv::RANSAC, 3,
+            cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0,
                                inlier_mask);
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
                 if (inlier_mask.at<uchar>(id_match)) {

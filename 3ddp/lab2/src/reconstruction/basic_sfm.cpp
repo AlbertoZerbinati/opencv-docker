@@ -475,8 +475,8 @@ void BasicSfM::solve() {
                                 }
             }
         if(diff < 0) continue;
-        int n_good = cv::recoverPose(E, points0, points1,intrinsic_matrix,init_r_mat,init_t_vec);
-        cv::Rodrigues(init_r_mat,init_r_vec);
+        // int n_good = cv::recoverPose(E, points0, points1,intrinsic_matrix,init_r_mat,init_t_vec);
+        // cv::Rodrigues(init_r_mat,init_r_vec);
         
 
         /////////////////////////////////////////////////////////////////////////////////////////
