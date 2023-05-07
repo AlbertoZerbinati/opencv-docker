@@ -272,10 +272,10 @@ void BasicSfM::solve() {
 
         cv::Mat essential_matrix;
 
-        cv::findHomography(points0, points1, cv::RANSAC, 0.001, inlier_mask_H);
+        cv::findHomography(points0, points1, cv::RANSAC, 2, inlier_mask_H);
         essential_matrix =
             cv::findEssentialMat(points0, points1, intrinsics_matrix,
-                                 cv::RANSAC, 0.999, 0.001, inlier_mask_E);
+                                 cv::RANSAC, 0.999, 2, inlier_mask_E);
 
         int num_inliers_H = cv::countNonZero(inlier_mask_H);
         int num_inliers_E = cv::countNonZero(inlier_mask_E);
