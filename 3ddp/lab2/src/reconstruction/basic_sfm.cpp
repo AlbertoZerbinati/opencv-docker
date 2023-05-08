@@ -33,12 +33,13 @@ struct ReprojectionError {
                     const T* const point_param_block, T* residuals) const {
         // camera_param_block[0,1,2] are the angle-axis rotation.
         T p[3];
+
         ceres::AngleAxisRotatePoint(camera_param_block, point_param_block, p);
 
         // camera_param_block[3,4,5] are the translation.
-        p[0] += camera_param_block[3];
-        p[1] += camera_param_block[4];
-        p[2] += camera_param_block[5];
+        p[0] += T(camera_param_block[3]);
+        p[1] += T(camera_param_block[4]);
+        p[2] += T(camera_param_block[5]);
 
         // Project the point into the canonical camera plane.
         T predicted_x = p[0] / p[2];
@@ -50,7 +51,11 @@ struct ReprojectionError {
         residuals[1] = predicted_y - T(observed_y);
         return true;  // Success
     }
-
+    static ceres::CostFunction *Create(const double observed_x,
+                                       const double observed_y) {
+        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 6, 3>(
+                new ReprojectionError(observed_x, observed_y)));
+    }
    private:
     double observed_x;
     double observed_y;
@@ -296,6 +301,20 @@ void BasicSfM::solve() {
                 init_r_mat = r;
                 init_t_vec = t;
                 cv::Rodrigues(r, init_r_vec);
+                //Now remove the outliers from the points
+                std::vector<cv::Point2d> points0_replace;
+                std::vector<cv::Point2d> points1_replace;
+                std::vector<int> inliers = (std::vector<int>) inlier_mask_E;
+                for(int i=0;i<inliers.size();++i)
+                {
+                    if(inliers[i])
+                    {
+                        points0_replace.push_back(points0[i]);
+                        points1_replace.push_back(points1[i]);
+                    }
+                }
+                points0.swap(points0_replace);
+                points1.swap(points1_replace);
                 seed_found = true;
                 // cout << "\n[SEED] found.\nR: " << r << "\nt: " << t <<
                 // "\n\n";
@@ -541,14 +560,6 @@ void BasicSfM::solve() {
                             cv::Mat_<double>(rot_mat1);
                         proj_mat1(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>(
                             {cam1_data[3], cam1_data[4], cam1_data[5]});
-
-                        // Extract the camera poses.
-                        cv::Matx34d cam0_pose(cam0_data[0], cam0_data[1],
-                                              cam0_data[2], cam0_data[3],
-                                              cam0_data[4], cam0_data[5]);
-                        cv::Matx34d cam1_pose(cam1_data[0], cam1_data[1],
-                                              cam1_data[2], cam1_data[3],
-                                              cam1_data[4], cam1_data[5]);
 
                         // Get the 2D observations of the point in both cameras.
                         std::vector<cv::Point2d> obs0, obs1;
