@@ -31,19 +31,21 @@ void FeatureMatcher::extractFeatures() {
         // feature, and store it into feats_colors_[i] vector.
         /////////////////////////////////////////////////////////////////////////////////////////
 
-        std::vector<cv::KeyPoint> keypoints;
-        cv::Mat descriptors;
-        detector->detectAndCompute(img, cv::Mat(), keypoints, descriptors);
-        features_[i] = keypoints;
-        descriptors_[i] = descriptors;
+        //Use of the detector to obtain keypoints and the corresponding descriptors
+        //Then save those in the vectors as required
+        detector->detectAndCompute(img, cv::noArray(), features_[i],  descriptors_[i]);
 
-        std::vector<cv::Vec3b> colors;
-        for (cv::KeyPoint kp : keypoints) {
-            cv::Point2f point = kp.pt;
-            cv::Vec3b color = img.at<cv::Vec3b>(point);
-            colors.push_back(color);
+        //For each keypoint extract the corresponding color and add it to a vector which is then stored as required
+        std::vector<cv::Vec3b> kp_colors;
+        for (cv::KeyPoint kp : features_[i]) {
+            //Retrieve the coordinates for the keypoint
+            cv::Point2f kp_point = kp.pt;
+            //obtain the color in the image
+            cv::Vec3b kp_color = img.at<cv::Vec3b>(kp_point);
+            kp_colors.push_back(kp_color);
         }
-        feats_colors_[i] = colors;
+        //save the color values
+        feats_colors_[i] = kp_colors;
 
         /////////////////////////////////////////////////////////////////////////////////////////
     }
@@ -75,58 +77,55 @@ void FeatureMatcher::exhaustiveMatching() {
             // setMatches( i, j, inlier_matches);
             /////////////////////////////////////////////////////////////////////////////////////////
 
-            // matcher initialization: if AKAZE or SIFT matcher is used then
-            // NORM_L2, NORM_HAMMING is used as normType, as suggested in OpenCV
+            // Matcher initialization: if AKAZE or SIFT matcher is used then
+            // NORM_L2 should be used, 
+            // Since ORB was the choice NORM_HAMMING is used as normType, as suggested in OpenCV
             // doc.
             cv::Ptr<cv::BFMatcher> matcher =
-                cv::BFMatcher::create(cv::NORM_HAMMING);
+                cv::BFMatcher::create(cv::NORM_HAMMING, true);
 
             // Matches are computed and their relative points are stored in
-            // their relative data structure.
+            // their relative data structure for both images (i and j).
             matcher->match(descriptors_[i], descriptors_[j], matches);
 
-            std::vector<cv::Point2f> src_points;
-            std::vector<cv::Point2f> dst_points;
+            std::vector<cv::Point2f> src_points, dst_points;
             for (cv::DMatch match : matches) {
                 src_points.push_back(features_[i][match.queryIdx].pt);
                 dst_points.push_back(features_[j][match.trainIdx].pt);
             }
 
-            // Definition of the data structures used to compute the inliers.
-            cv::Mat inlier_mask;
-            std::vector<cv::DMatch> inlier_H;
-            std::vector<cv::DMatch> inlier_E;
+            // Definition of the masks used to compute the inliers.
+            cv::Mat inlier_H, inlier_E;
 
-            // Computation of the inliers by using homography.
-            // We need to:
-            //  - check if we are dealing with pure rotation;
-            //  - se as K matrix the new_intrinsics_matrix_.
-            cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0,
-                               inlier_mask);
-            for (int id_match = 0; id_match < src_points.size(); id_match++) {
-                if (inlier_mask.at<uchar>(id_match)) {
-                    inlier_H.push_back(matches[id_match]);
-                }
-            }
+            // Computation of the Homography using RANSAC and corresponding inliers
+            cv::findHomography(src_points, dst_points, inlier_H, cv::RANSAC, 1.0);
 
-            // Computation of the inliers by using essential.
+            // Computation of the Essential Matrix using RANSAC and corresponding inliers
             cv::findEssentialMat(src_points, dst_points, new_intrinsics_matrix_,
-                                 cv::RANSAC, 0.999, 1.0, inlier_mask);
-            for (int id_match = 0; id_match < src_points.size(); id_match++) {
-                if (inlier_mask.at<uchar>(id_match)) {
-                    inlier_E.push_back(matches[id_match]);
-                }
-            }
+                                 cv::RANSAC, 0.999, 1.0, inlier_E);
 
+            int num_inliers_E = cv::countNonZero(inlier_E);
+            int num_inliers_H = cv::countNonZero(inlier_H);
             // Choose the best result, in terms of number of inliers, as final
             // result, using 5 as threshold.
-            if (inlier_E.size() >= inlier_H.size() && inlier_E.size() > 5) {
-                std::copy(inlier_E.begin(), inlier_E.end(),
-                          std::back_inserter(inlier_matches));
-            } else if (inlier_H.size() > 5) {
-                std::copy(inlier_H.begin(), inlier_H.end(),
-                          std::back_inserter(inlier_matches));
-            } else {
+            if (num_inliers_E >= num_inliers_H &&  num_inliers_E > 5) {
+                //Save only the inliers as matches
+                for (int id = 0; id < src_points.size(); id++) {
+                    if (inlier_E.at<uchar>(id)) {
+                        inlier_matches.push_back(matches[id]);
+                    }
+                }
+
+            } else if (num_inliers_H > 5) {
+                //Save only the inliers as matches
+                for (int id = 0; id < src_points.size(); id++) {
+                    if (inlier_H.at<uchar>(id)) {
+                        inlier_matches.push_back(matches[id]);
+                    }
+                }
+            } else
+            // we don't have more than 5 inliers neither for E nor H
+            {
                 inlier_matches = {};
             }
 

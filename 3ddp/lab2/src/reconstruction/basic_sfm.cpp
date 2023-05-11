@@ -31,7 +31,8 @@ struct ReprojectionError {
     template <typename T>
     bool operator()(const T* const camera_param_block,
                     const T* const point_param_block, T* residuals) const {
-        // camera_param_block[0,1,2] are the angle-axis rotation.
+        // camera_param_block contains the angle-axis rotation and translation needed w.r.t. the base camera
+        // point_param_block contains the coordinates of the 3D point in the world ref. frame
         T p[3];
 
         ceres::AngleAxisRotatePoint(camera_param_block, point_param_block, p);
@@ -45,17 +46,21 @@ struct ReprojectionError {
         T predicted_x = p[0] / p[2];
         T predicted_y = p[1] / p[2];
 
-        // The error is the difference between the predicted and observed
+        // The projection error is the difference between the predicted and observed
         // position.
         residuals[0] = predicted_x - T(observed_x);
         residuals[1] = predicted_y - T(observed_y);
+
         return true;  // Success
     }
+
+    //Create method
     static ceres::CostFunction *Create(const double observed_x,
                                        const double observed_y) {
         return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 6, 3>(
                 new ReprojectionError(observed_x, observed_y)));
     }
+
    private:
     double observed_x;
     double observed_y;
@@ -273,30 +278,23 @@ void BasicSfM::solve() {
         // should be replaced with the criteria described above
         /////////////////////////////////////////////////////////////////////////////////////////
 
-        cv::Mat essential_matrix;
-
-        cv::findHomography(points0, points1, cv::RANSAC, 2, inlier_mask_H);
-        essential_matrix =
-            cv::findEssentialMat(points0, points1, intrinsics_matrix,
-                                 cv::RANSAC, 0.999, 2, inlier_mask_E);
-
+        //Calculate Homgraphy and Essential Matrices using RANSAC
+        cv::findHomography(points0, points1,inlier_mask_H, cv::RANSAC, 2.0);
+        cv::Mat essential_mat = cv::findEssentialMat(points0, points1, intrinsics_matrix,
+                                                     cv::RANSAC, 0.999, 2.0, inlier_mask_E);
+        //Obtain the number of inliers
         int num_inliers_H = cv::countNonZero(inlier_mask_H);
         int num_inliers_E = cv::countNonZero(inlier_mask_E);
 
-        // cout << "\n[SEED] num_inliers_H: " << num_inliers_H << "\n";
-        // cout << "\n[SEED] num_inliers_E: " << num_inliers_E << "\n";
-
-        // Check if the transformation is better explained by E than H.
+        // Check if the transformation is better explained by E than H, by comparing the number of inliers.
         if (num_inliers_E > num_inliers_H) {
             cv::Mat r, t;
-            cv::recoverPose(essential_matrix, points0, points1,
+            // Decompose essential matrix in order to have Rotation and translation
+            cv::recoverPose(essential_mat, points0, points1,
                             intrinsics_matrix, r, t, inlier_mask_E);
-
-            // cout << "\n[SEED] translation: " << t << "\n";
 
             // Check if the recovered transformation is mainly given by a
             // sideward motion.
-            // TODO: also use thresholds?
             if (abs(t.at<double>(0)) > abs(t.at<double>(2))) {
                 init_r_mat = r;
                 init_t_vec = t;
@@ -315,9 +313,8 @@ void BasicSfM::solve() {
                 }
                 points0.swap(points0_replace);
                 points1.swap(points1_replace);
+                //Set the flag to true
                 seed_found = true;
-                // cout << "\n[SEED] found.\nR: " << r << "\nt: " << t <<
-                // "\n\n";
             }
         }
 
@@ -562,31 +559,29 @@ void BasicSfM::solve() {
                             {cam1_data[3], cam1_data[4], cam1_data[5]});
 
                         // Get the 2D observations of the point in both cameras.
-                        std::vector<cv::Point2d> obs0, obs1;
-                        obs0.push_back(
+                        points0[0] =
                             {observations_[2 * cam_observation[new_cam_pose_idx]
                                                               [pt_idx]],
                              observations_[2 * cam_observation[new_cam_pose_idx]
                                                               [pt_idx] +
-                                           1]});
-                        obs1.push_back(
+                                           1]};
+                        points1[0] =
                             {observations_[2 *
                                            cam_observation[cam_idx][pt_idx]],
                              observations_
-                                 [2 * cam_observation[cam_idx][pt_idx] + 1]});
+                                 [2 * cam_observation[cam_idx][pt_idx] + 1]};
 
                         // Triangulate the point using the two camera poses.
-                        cv::Mat_<double> point_homog;
-                        cv::triangulatePoints(proj_mat0, proj_mat1, obs0, obs1,
-                                              point_homog);
+                        cv::triangulatePoints(proj_mat0, proj_mat1, points0, points1,
+                                              hpoints4D);
 
                         // Check the cheirality constraint for both cameras.
-                        if (point_homog(2) / point_homog(3) > 0.0) {
+                        if (hpoints4D(2) / hpoints4D(3) > 0.0) {
                             // Convert from homogeneous coordinates to Euclidean
                             // coordinates.
-                            cv::Vec3d point(point_homog(0) / point_homog(3),
-                                            point_homog(1) / point_homog(3),
-                                            point_homog(2) / point_homog(3));
+                            cv::Vec3d point(hpoints4D(0) / hpoints4D(3),
+                                            hpoints4D(1) / hpoints4D(3),
+                                            hpoints4D(2) / hpoints4D(3));
 
                             // Update the 3D point in the optimization vector.
                             n_new_pts++;
@@ -686,11 +681,8 @@ void BasicSfM::bundleAdjustmentIter(int new_cam_idx) {
                 // elements.
                 //////////////////////////////////////////////////////////////////////////////////
 
-                ceres::CostFunction* cost_function =
-                    new ceres::AutoDiffCostFunction<ReprojectionError, 2, 6, 3>(
-                        new ReprojectionError(observations_[2 * i_obs],
-                                              observations_[2 * i_obs + 1]));
-
+                ceres::CostFunction* cost_function = ReprojectionError::Create(observations_[2 * i_obs],
+                                                                               observations_[2 * i_obs + 1]);
                 problem.AddResidualBlock(
                     cost_function, new ceres::CauchyLoss(2 * max_reproj_err_),
                     cameraBlockPtr(cam_pose_index_[i_obs]),
