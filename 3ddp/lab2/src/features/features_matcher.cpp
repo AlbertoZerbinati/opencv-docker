@@ -95,33 +95,42 @@ void FeatureMatcher::exhaustiveMatching() {
             }
 
             // Definition of the masks used to compute the inliers.
-            cv::Mat inlier_H, inlier_E;
+            cv::Mat inlier_mask;
+            std::vector<cv::DMatch> inlier_H;
+            std::vector<cv::DMatch> inlier_E;
 
             // Computation of the Homography using RANSAC and corresponding inliers
-            cv::findHomography(src_points, dst_points, inlier_H, cv::RANSAC, 1.0);
+            cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0, inlier_mask);
+
+            for (int id_match = 0; id_match < src_points.size(); id_match++) {
+                if (inlier_mask.at<uchar>(id_match)) {
+                    inlier_H.push_back(matches[id_match]);
+                }
+            }
 
             // Computation of the Essential Matrix using RANSAC and corresponding inliers
             cv::findEssentialMat(src_points, dst_points, new_intrinsics_matrix_,
-                                 cv::RANSAC, 0.999, 1.0, inlier_E);
+                                 cv::RANSAC, 0.999, 1.0, inlier_mask);
 
-            int num_inliers_E = cv::countNonZero(inlier_E);
-            int num_inliers_H = cv::countNonZero(inlier_H);
+            for (int id_match = 0; id_match < src_points.size(); id_match++) {
+                if (inlier_mask.at<uchar>(id_match)) {
+                    inlier_E.push_back(matches[id_match]);
+                }
+            }
+            
+            int num_inliers_E = inlier_E.size();
+            int num_inliers_H = inlier_H.size();
             // Choose the best result, in terms of number of inliers, as final
             // result, using 5 as threshold.
             if (num_inliers_E >= num_inliers_H &&  num_inliers_E > 5) {
                 //Save only the inliers as matches
-                for (int id = 0; id < src_points.size(); id++) {
-                    if (inlier_E.at<uchar>(id)) {
-                        inlier_matches.push_back(matches[id]);
-                    }
-                }
+                std::copy(inlier_E.begin(), inlier_E.end(),
+                          std::back_inserter(inlier_matches));
 
             } else if (num_inliers_H > 5) {
                 //Save only the inliers as matches
-                for (int id = 0; id < src_points.size(); id++) {
-                    if (inlier_H.at<uchar>(id)) {
-                        inlier_matches.push_back(matches[id]);
-                    }
+                std::copy(inlier_H.begin(), inlier_H.end(),
+                          std::back_inserter(inlier_matches));
                 }
             } else
             // we don't have more than 5 inliers neither for E nor H
