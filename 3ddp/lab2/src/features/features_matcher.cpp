@@ -33,7 +33,7 @@ void FeatureMatcher::extractFeatures() {
 
         //Use of the detector to obtain keypoints and the corresponding descriptors
         //Then save those in the vectors as required
-        detector->detectAndCompute(img, cv::noArray(), features_[i],  descriptors_[i]);
+        detector->detectAndCompute(img, cv::Mat(), features_[i],  descriptors_[i]);
 
         //For each keypoint extract the corresponding color and add it to a vector which is then stored as required
         std::vector<cv::Vec3b> kp_colors;
@@ -82,7 +82,7 @@ void FeatureMatcher::exhaustiveMatching() {
             // Since ORB was the choice NORM_HAMMING is used as normType, as suggested in OpenCV
             // doc.
             cv::Ptr<cv::BFMatcher> matcher =
-                cv::BFMatcher::create(cv::NORM_HAMMING, true);
+                cv::BFMatcher::create(cv::NORM_HAMMING);
 
             // Matches are computed and their relative points are stored in
             // their relative data structure for both images (i and j).
@@ -96,15 +96,15 @@ void FeatureMatcher::exhaustiveMatching() {
 
             // Definition of the masks used to compute the inliers.
             cv::Mat inlier_mask;
-            std::vector<cv::DMatch> inlier_H;
-            std::vector<cv::DMatch> inlier_E;
+            std::vector<cv::DMatch> inliers_H;
+            std::vector<cv::DMatch> inliers_E;
 
             // Computation of the Homography using RANSAC and corresponding inliers
             cv::findHomography(src_points, dst_points, cv::RANSAC, 1.0, inlier_mask);
 
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
                 if (inlier_mask.at<uchar>(id_match)) {
-                    inlier_H.push_back(matches[id_match]);
+                    inliers_H.push_back(matches[id_match]);
                 }
             }
 
@@ -114,22 +114,22 @@ void FeatureMatcher::exhaustiveMatching() {
 
             for (int id_match = 0; id_match < src_points.size(); id_match++) {
                 if (inlier_mask.at<uchar>(id_match)) {
-                    inlier_E.push_back(matches[id_match]);
+                    inliers_E.push_back(matches[id_match]);
                 }
             }
 
-            int num_inliers_E = inlier_E.size();
-            int num_inliers_H = inlier_H.size();
+            int num_inliers_E = inliers_E.size();
+            int num_inliers_H = inliers_H.size();
             // Choose the best result, in terms of number of inliers, as final
             // result, using 5 as threshold.
             if (num_inliers_E >= num_inliers_H &&  num_inliers_E > 5) {
                 //Save only the inliers as matches
-                std::copy(inlier_E.begin(), inlier_E.end(),
+                std::copy(inliers_E.begin(), inliers_E.end(),
                           std::back_inserter(inlier_matches));
 
             } else if (num_inliers_H > 5) {
                 //Save only the inliers as matches
-                std::copy(inlier_H.begin(), inlier_H.end(),
+                std::copy(inliers_H.begin(), inliers_H.end(),
                           std::back_inserter(inlier_matches));
             } else
             // we don't have more than 5 inliers neither for E nor H

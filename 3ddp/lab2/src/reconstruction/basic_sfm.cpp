@@ -34,7 +34,7 @@ struct ReprojectionError {
         // camera_param_block contains the angle-axis rotation and translation needed w.r.t. the base camera
         // point_param_block contains the coordinates of the 3D point in the world ref. frame
         T p[3];
-
+        //Using directly the camera_param_block for [0,1,2] indexes
         ceres::AngleAxisRotatePoint(camera_param_block, point_param_block, p);
 
         // camera_param_block[3,4,5] are the translation.
@@ -279,7 +279,7 @@ void BasicSfM::solve() {
         /////////////////////////////////////////////////////////////////////////////////////////
 
         //Calculate Homgraphy and Essential Matrices using RANSAC
-        cv::findHomography(points0, points1,inlier_mask_H, cv::RANSAC, 2.0);
+        cv::findHomography(points0, points1, cv::RANSAC, 2.0, inlier_mask_H);
         cv::Mat essential_mat = cv::findEssentialMat(points0, points1, intrinsics_matrix,
                                                      cv::RANSAC, 0.999, 2.0, inlier_mask_E);
         //Obtain the number of inliers
@@ -302,10 +302,10 @@ void BasicSfM::solve() {
                 //Now remove the outliers from the points
                 std::vector<cv::Point2d> points0_replace;
                 std::vector<cv::Point2d> points1_replace;
-                std::vector<int> inliers = (std::vector<int>) inlier_mask_E;
-                for(int i=0;i<inliers.size();++i)
+                //std::vector<int> inliers = (std::vector<int>) inlier_mask_E;
+                for(int i=0;i<points0.size();++i)
                 {
-                    if(inliers[i])
+                    if(inlier_mask_E.at<uchar>(i))
                     {
                         points0_replace.push_back(points0[i]);
                         points1_replace.push_back(points1[i]);
