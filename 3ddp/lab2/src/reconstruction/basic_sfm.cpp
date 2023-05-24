@@ -12,16 +12,58 @@
 using namespace std;
 
 struct ReprojectionError {
-    //////////////////////////// Code to be completed (5/6)
-    /////////////////////////////////////
+    //////////////////////////// Code to be completed (5/6) ///////////////////////////////////////////
     // This class should include an auto-differentiable cost function (see Ceres
     // Solver docs). Remember that we are dealing with a normalized, canonical
     // camera: point projection is easy! To rotete a point given an axis-angle
     // rotation, use the Ceres function: AngleAxisRotatePoint(...) (see
-    // ceres/rotation.h) WARNING: When dealing with the AutoDiffCostFunction
-    // template parameters, pay attention to the order of the template
-    // parameters
+    // ceres/rotation.h).
+    // WARNING: When dealing with the AutoDiffCostFunction template parameters,
+    // pay attention to the order of the template parameters
     //////////////////////////////////////////////////////////////////////////////////////////
+
+   public:
+    // Initialize class variables with the observed point's coordinates.
+    ReprojectionError(double observed_x, double observed_y)
+        : observed_x(observed_x), observed_y(observed_y) {}
+
+    // Compute the residuals given the camera and point parameters blocks.
+    template <typename T>
+    bool operator()(const T* const camera_param_block,
+                    const T* const point_param_block, T* residuals) const {
+        // camera_param_block contains the angle-axis rotation and translation needed w.r.t. the base camera
+        // point_param_block contains the coordinates of the 3D point in the world ref. frame
+        T p[3];
+        //Using directly the camera_param_block for [0,1,2] indexes
+        ceres::AngleAxisRotatePoint(camera_param_block, point_param_block, p);
+
+        // camera_param_block[3,4,5] are the translation.
+        p[0] += T(camera_param_block[3]);
+        p[1] += T(camera_param_block[4]);
+        p[2] += T(camera_param_block[5]);
+
+        // Project the point into the canonical camera plane.
+        T predicted_x = p[0] / p[2];
+        T predicted_y = p[1] / p[2];
+
+        // The projection error is the difference between the predicted and observed
+        // position.
+        residuals[0] = predicted_x - T(observed_x);
+        residuals[1] = predicted_y - T(observed_y);
+
+        return true;  // Success
+    }
+
+    //Create method
+    static ceres::CostFunction *Create(const double observed_x,
+                                       const double observed_y) {
+        return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 6, 3>(
+                new ReprojectionError(observed_x, observed_y)));
+    }
+
+   private:
+    double observed_x;
+    double observed_y;
 
     //////////////////////////////////////////////////////////////////////////////////////////
 };
@@ -111,12 +153,611 @@ void BasicSfM::readFromFile(const std::string& filename,
     } else {
         memset(parameters_.data(), 0, num_parameters_ * sizeof(double));
         // Masks used to indicate which cameras and points have been optimized
-        // so far
+        // so far.
         cam_pose_optim_iter_.resize(num_cam_poses_, 0);
         pts_optim_iter_.resize(num_points_, 0);
     }
 
     fclose(fptr);
+}
+
+void BasicSfM::solve() {
+    // Canonical camera so identity K.
+    cv::Mat_<double> intrinsics_matrix = cv::Mat_<double>::eye(3, 3);
+
+    // For each camera pose, prepare a map that reports the pairs [point index,
+    // observation index]. This map is used to quickly retrieve the observation
+    // index given a 3D point index. For instance, to query if the camera pose
+    // with index i_cam observed the 3D point with index i_pt, check if
+    // cam_observation[i_cam].find( i_pt ) is not cam_observation[i_cam].end(),
+    // i.e.,: if (cam_observation[i_cam].find( i_pt ) !=
+    // cam_observation[i_cam].end()) { .... }. In case of success, you can
+    // retrieve the observation index obs_id simply with: obs_id =
+    // cam_observation[i_cam][i_pt].
+    vector<map<int, int> > cam_observation(num_cam_poses_);
+    for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
+        int i_cam = cam_pose_index_[i_obs], i_pt = point_index_[i_obs];
+        cam_observation[i_cam][i_pt] = i_obs;
+    }
+
+    // Compute a (symmetric) num_cam_poses_ X num_cam_poses_ matrix that counts
+    // the number of correspondences between pairs of camera poses.
+    Eigen::MatrixXi corr =
+        Eigen::MatrixXi::Zero(num_cam_poses_, num_cam_poses_);
+
+    for (int r = 0; r < num_cam_poses_; r++) {
+        for (int c = r + 1; c < num_cam_poses_; c++) {
+            int nc = 0;
+            for (auto const& co_iter : cam_observation[r]) {
+                if (cam_observation[c].find(co_iter.first) !=
+                    cam_observation[c].end())
+                    nc++;
+            }
+            corr(r, c) = nc;
+        }
+    }
+
+    // num_cam_poses_ X num_cam_poses_ matrix to mask already tested seed pairs.
+    // already_tested_pair(r,c) == 0 -> not tested pair
+    // already_tested_pair(r,c) != 0 -> already tested pair
+    Eigen::MatrixXi already_tested_pair =
+        Eigen::MatrixXi::Zero(num_cam_poses_, num_cam_poses_);
+
+    // From the correspondence matrix corr select a seed pair of poses that both
+    // a) maximize the number of correspondences b) define an Essential Matrix
+    // as geometrical model c) define a "good" translation.
+    bool seed_found = false;
+    // Indices of the two camera poses that define the initial seed pair.
+    int ref_cam_pose_idx, new_cam_pose_idx;
+    // Initial R,t between the seed pair.
+    cv::Mat init_r_mat, init_r_vec, init_t_vec;
+
+    std::vector<cv::Point2d> points0, points1;
+    cv::Mat inlier_mask_E, inlier_mask_H;
+
+    while (!seed_found) {
+        points0.clear();
+        points1.clear();
+
+        int max_corr = -1;
+        for (int r = 0; r < num_cam_poses_; r++) {
+            for (int c = r + 1; c < num_cam_poses_; c++) {
+                if (!already_tested_pair(r, c) && corr(r, c) > max_corr) {
+                    max_corr = corr(r, c);
+                    ref_cam_pose_idx = r;
+                    new_cam_pose_idx = c;
+                }
+            }
+        }
+
+        // cout << "\n[SEED] considering ref_cam_pose_idx: " << ref_cam_pose_idx
+        //      << " new_cam_pose_idx: " << new_cam_pose_idx << "\n";
+
+        if (max_corr < 0) {
+            std::cout << "No seed pair found, exiting" << std::endl;
+            return;
+        }
+        already_tested_pair(ref_cam_pose_idx, new_cam_pose_idx) = 1;
+
+        // For each point, if the two cameras saw it, add the respective
+        // observations.
+        for (std::pair<const int, int> co_iter :
+             cam_observation[ref_cam_pose_idx]) {
+            if (cam_observation[new_cam_pose_idx].find(co_iter.first) !=
+                cam_observation[new_cam_pose_idx].end()) {
+                points0.emplace_back(observations_[2 * co_iter.second],
+                                     observations_[2 * co_iter.second + 1]);
+                points1.emplace_back(
+                    observations_[2 * cam_observation[new_cam_pose_idx]
+                                                     [co_iter.first]],
+                    observations_[2 * cam_observation[new_cam_pose_idx]
+                                                     [co_iter.first] +
+                                  1]);
+            }
+        }
+
+        // In points0 and points1 we now have all the corresponding observations
+        // of the two cameras at hand.
+
+        //////////////////////////// Code to be completed (3/6) ///////////////////////////////////////
+        // Extract both Essential matrix E and Homograph matrix H.
+        // Check that the number of inliers for the model E is higher than the
+        // number of inliers for the model H (-> use inlier_mask_E and
+        // inlier_mask_H defined above <-). As threshold in the functions to
+        // estimate both models, you may use 0.001 or similar. If true, recover
+        // from E the initial rigid body transformation between ref_cam_pose_idx
+        // and new_cam_pose_idx by using the cv::recoverPose() OpenCV function
+        // (use inlier_mask_E as input/output param). Check if the recovered
+        // transformation is mainly given by a sideward motion, which is better
+        // than forward one. Store the transformation into init_r_mat and
+        // init_t_vec; defined above and set the seed_found flag to true
+        // Otherwise, test a different [ref_cam_pose_idx, new_cam_pose_idx] pair
+        // (while( !seed_found ) loop).
+        // The dummy condition here:
+        // if (true) seed_found = true;
+        // should be replaced with the criteria described above
+        /////////////////////////////////////////////////////////////////////////////////////////
+
+        //Calculate Homgraphy and Essential Matrices using RANSAC
+        cv::findHomography(points0, points1, cv::RANSAC, 2.0, inlier_mask_H);
+        cv::Mat essential_mat = cv::findEssentialMat(points0, points1, intrinsics_matrix,
+                                                     cv::RANSAC, 0.999, 2.0, inlier_mask_E);
+        //Obtain the number of inliers
+        int num_inliers_H = cv::countNonZero(inlier_mask_H);
+        int num_inliers_E = cv::countNonZero(inlier_mask_E);
+
+        // Check if the transformation is better explained by E than H, by comparing the number of inliers.
+        if (num_inliers_E > num_inliers_H) {
+            cv::Mat r, t;
+            // Decompose essential matrix in order to have Rotation and translation
+            cv::recoverPose(essential_mat, points0, points1,
+                            intrinsics_matrix, r, t, inlier_mask_E);
+
+            // Check if the recovered transformation is mainly given by a
+            // sideward motion.
+            if (abs(t.at<double>(0)) > abs(t.at<double>(2))) {
+                init_r_mat = r;
+                init_t_vec = t;
+                cv::Rodrigues(r, init_r_vec);
+                //Now remove the outliers from the points
+                std::vector<cv::Point2d> points0_replace;
+                std::vector<cv::Point2d> points1_replace;
+                //std::vector<int> inliers = (std::vector<int>) inlier_mask_E;
+                for(int i=0;i<points0.size();++i)
+                {
+                    if(inlier_mask_E.at<uchar>(i))
+                    {
+                        points0_replace.push_back(points0[i]);
+                        points1_replace.push_back(points1[i]);
+                    }
+                }
+                points0.swap(points0_replace);
+                points1.swap(points1_replace);
+                //Set the flag to true
+                seed_found = true;
+            }
+        }
+
+        /////////////////////////////////////////////////////////////////////////////////////////
+    }
+
+    // Initialize the first optimized poses, by integrating them into the
+    // registration. cam_pose_optim_iter_ and pts_optim_iter_ are simple mask
+    // vectors that define which camera poses and which point positions have
+    // been already registered, specifically if cam_pose_optim_iter_[pos_id] or
+    // pts_optim_iter_[id] are:
+    // > 0 ---> The corresponding pose or point position has been already been
+    // estimated.
+    // == 0 ---> The corresponding pose or point position has not yet been
+    // estimated.
+    // == -1 ---> The corresponding pose or point position has been rejected due
+    // to e.g. outliers, etc...
+    cam_pose_optim_iter_[ref_cam_pose_idx] =
+        cam_pose_optim_iter_[new_cam_pose_idx] = 1;
+
+    // Initialize the first RT wrt the reference position.
+    cv::Mat r_vec;
+    // Recover the axis-angle rotation from init_r_mat.
+    cv::Rodrigues(init_r_mat, r_vec);
+
+    // And update the parameters_ vector.
+    // First camera pose of the seed pair: just the identity transformation for
+    // now.
+    cv::Mat_<double> ref_rt_vec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
+    initCamParams(ref_cam_pose_idx, ref_rt_vec, ref_rt_vec);
+    // Second camera pose of the seed pair: the just recovered transformation.
+    initCamParams(new_cam_pose_idx, r_vec, init_t_vec);
+
+    printPose(ref_cam_pose_idx);
+    printPose(new_cam_pose_idx);
+
+    // Triangulate the 3D points observed by both cameras.
+    // We need the 3x4 extrinsic parameters projection matrices.
+    cv::Mat_<double> proj_mat0 = cv::Mat_<double>::zeros(3, 4);
+    cv::Mat_<double> proj_mat1(3, 4);
+    cv::Mat_<double> hpoints4D;
+
+    // First camera pose of the seed pair: just the identity transformation for
+    // now.
+    proj_mat0(0, 0) = proj_mat0(1, 1) = proj_mat0(2, 2) = 1.0;
+    // Second camera pose of the seed pair: the just recovered transformation.
+    init_r_mat.copyTo(proj_mat1(cv::Rect(0, 0, 3, 3)));  // R
+    init_t_vec.copyTo(proj_mat1(cv::Rect(3, 0, 1, 3)));  // t
+
+    // Triangulate the observations (points0, points1) using the projection
+    // matrices. Save the reconstructed points in hpoints4D (homog coord).
+    cv::triangulatePoints(proj_mat0, proj_mat1, points0, points1, hpoints4D);
+
+    // Initialize the first optimized points: check each observation in the
+    // reference camera to see if its corresponding point is observed in the
+    // new camera. If the point is observed in the new camera and the
+    // observation is an inlier, normalize the point in homogeneous coordinates
+    // and verify the cheirality constraint to ensure that the point is in front
+    // of both cameras. Reproject the point in both cameras and check if the
+    // reprojection error is small enough. If it is, add the point to the
+    // reconstruction.
+    int observation_index = -1;
+    for (auto const& co_iter : cam_observation[ref_cam_pose_idx]) {
+        observation_index++;
+        auto& pt_idx = co_iter.first;
+        if (cam_observation[new_cam_pose_idx].find(pt_idx) !=
+            cam_observation[new_cam_pose_idx].end()) {
+            if (inlier_mask_E.at<unsigned char>(observation_index)) {
+                // Initialize the new point into the optimization.
+                double* pt = pointBlockPtr(pt_idx);
+
+                // H-normalize the point.
+                pt[0] = hpoints4D.at<double>(0, observation_index) /
+                        hpoints4D.at<double>(3, observation_index);
+                pt[1] = hpoints4D.at<double>(1, observation_index) /
+                        hpoints4D.at<double>(3, observation_index);
+                pt[2] = hpoints4D.at<double>(2, observation_index) /
+                        hpoints4D.at<double>(3, observation_index);
+
+                // Check the cheirality constraint.
+                if (pt[2] > 0.0) {
+                    // Try to reproject the estimated 3D point in both cameras.
+                    cv::Mat_<double> pt_3d =
+                        (cv::Mat_<double>(3, 1) << pt[0], pt[1], pt[2]);
+
+                    pt_3d = init_r_mat * pt_3d + init_t_vec;
+
+                    cv::Point2d p0(pt[0] / pt[2], pt[1] / pt[2]),
+                        p1(pt_3d(0, 0) / pt_3d(2, 0),
+                           pt_3d(1, 0) / pt_3d(2, 0));
+
+                    // If the reprojection error is small, add the point to the
+                    // reconstruction.
+                    if (cv::norm(p0 - points0[observation_index]) <
+                            max_reproj_err_ &&
+                        cv::norm(p1 - points1[observation_index]) <
+                            max_reproj_err_)
+                        pts_optim_iter_[pt_idx] = 1;
+                    else
+                        pts_optim_iter_[pt_idx] = -1;
+                }
+            }
+        }
+    }
+
+    // First bundle adjustment iteration: here we have only two camera poses,
+    // i.e., the seed pair.
+    bundleAdjustmentIter(new_cam_pose_idx);
+
+    // Start to register new poses and observations...
+    for (int iter = 1; iter < num_cam_poses_ - 1; iter++) {
+        // The vector n_init_pts stores the number of points already being
+        // optimized that are projected in a new camera pose when is optimized
+        // for the first time.
+        std::vector<int> n_init_pts(num_cam_poses_, 0);
+        int max_init_pts = -1;
+
+        // Select the new camera (new_cam_pose_idx) to be included in the
+        // optimization as the one that has more projected points in common with
+        // the cameras already included in the optimization.
+        for (int i_p = 0; i_p < num_points_; i_p++) {
+            if (pts_optim_iter_[i_p] > 0)  // Point already added.
+            {
+                for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
+                    if (cam_pose_optim_iter_[i_c] == 0
+                        // New camera pose not yet registered.
+                        &&
+                        // Does camera i_c see this 3D point?
+                        cam_observation[i_c].find(i_p) !=
+                            cam_observation[i_c].end())
+                        n_init_pts[i_c]++;
+                }
+            }
+        }
+
+        // Select the new camera pose that see more already registered 3D
+        // points.
+        for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
+            if (cam_pose_optim_iter_[i_c] == 0 &&
+                n_init_pts[i_c] > max_init_pts) {
+                max_init_pts = n_init_pts[i_c];
+                new_cam_pose_idx = i_c;
+            }
+        }
+        cout << "\n max_init_pts: " << max_init_pts << "\n";
+
+        std::cout << "new camera: " << new_cam_pose_idx << std::endl;
+
+        // Now new_cam_pose_idx is the index of the next camera pose to be
+        // registered. Extract the 3D points that are projected in the
+        // new_cam_pose_idx-th pose and that are already registered.
+        std::vector<cv::Point3d> scene_pts;
+        std::vector<cv::Point2d> img_pts;
+        for (int i_p = 0; i_p < num_points_; i_p++) {
+            if (pts_optim_iter_[i_p] > 0 &&  // Already registered points only.
+                cam_observation[new_cam_pose_idx].find(i_p) !=
+                    cam_observation[new_cam_pose_idx].end()) {
+                double* pt = pointBlockPtr(i_p);
+                scene_pts.emplace_back(pt[0], pt[1], pt[2]);
+                img_pts.emplace_back(
+                    observations_[cam_observation[new_cam_pose_idx][i_p] * 2],
+                    observations_[cam_observation[new_cam_pose_idx][i_p] * 2 +
+                                  1]);
+            }
+        }
+        if (scene_pts.size() <= 3) {
+            std::cout << "No other positions can be optimized, exiting"
+                      << std::endl;
+            return;
+        }
+
+        // Estimate an initial R,t by using PnP + RANSAC...
+        cv::solvePnPRansac(scene_pts, img_pts, intrinsics_matrix, cv::Mat(),
+                           init_r_vec, init_t_vec, false, 100, max_reproj_err_);
+        // ... and add to the pool of optimized camera positions.
+        initCamParams(new_cam_pose_idx, init_r_vec, init_t_vec);
+        cam_pose_optim_iter_[new_cam_pose_idx] = 1;
+
+        // Extract the new points that, thanks to the new camera, are going to
+        // be optimized.
+        int n_new_pts = 0;
+        std::vector<cv::Point2d> points0(1), points1(1);
+        cv::Mat_<double> proj_mat0(3, 4), proj_mat1(3, 4), hpoints4D;
+        for (int cam_idx = 0; cam_idx < num_cam_poses_; cam_idx++) {
+            if (cam_pose_optim_iter_[cam_idx] > 0) {
+                for (auto const& co_iter : cam_observation[cam_idx]) {
+                    auto& pt_idx = co_iter.first;
+                    if (pts_optim_iter_[pt_idx] == 0 &&
+                        cam_observation[new_cam_pose_idx].find(pt_idx) !=
+                            cam_observation[new_cam_pose_idx].end()) {
+                        // For each camera pose that has already been optimized,
+                        // for all points observed in the new camera pose and
+                        // not yet optimized.
+
+                        double *cam0_data = cameraBlockPtr(new_cam_pose_idx),
+                               *cam1_data = cameraBlockPtr(cam_idx);
+
+                        //////////////////////////// Code to be completed (4/6) ////////////////////////////////////
+                        // Triangulate the 3D point with index pt_idx by using
+                        // the observation of this point in the camera poses
+                        // with indices new_cam_pose_idx and cam_idx. The
+                        // pointers cam0_data and cam1_data point to the 6D pose
+                        // blocks for these inside the parameters vector (e.g.,
+                        // cam0_data[0], cam0_data[1], cam0_data[2] hold the
+                        // axis-angle representation fo the rotation of the
+                        // camera with index new_cam_pose_idx.
+                        // Use the OpenCV cv::triangulatePoints() function,
+                        // remembering to check the cheirality constraint for
+                        // both cameras. In case of success (cheirality
+                        // constraint satisfied) execute the following
+                        // instructions (decomment e cut&paste):
+                        // n_new_pts++;
+                        // pts_optim_iter_[pt_idx] = 1;
+                        // double *pt = pointBlockPtr(pt_idx);
+                        // pt[0] = /*X coordinate of the estimated point */;
+                        // pt[1] = /*X coordinate of the estimated point */;
+                        // pt[2] = /*X coordinate of the estimated point */;
+                        /////////////////////////////////////////////////////////////////////////////////////////
+
+                        // Define the rotation matrices.
+                        cv::Mat_<double> rot_mat0 =
+                            cv::Mat_<double>::zeros(3, 3);
+                        cv::Mat_<double> rot_mat1 =
+                            cv::Mat_<double>::zeros(3, 3);
+                        cv::Rodrigues(
+                            cv::Mat_<double>(
+                                {cam0_data[0], cam0_data[1], cam0_data[2]}),
+                            rot_mat0);
+                        cv::Rodrigues(
+                            cv::Mat_<double>(
+                                {cam1_data[0], cam1_data[1], cam1_data[2]}),
+                            rot_mat1);
+
+                        // Populate the projection matrices.
+                        proj_mat0(cv::Rect(0, 0, 3, 3)) =
+                            cv::Mat_<double>(rot_mat0);
+                        proj_mat0(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>(
+                            {cam0_data[3], cam0_data[4], cam0_data[5]});
+                        proj_mat1(cv::Rect(0, 0, 3, 3)) =
+                            cv::Mat_<double>(rot_mat1);
+                        proj_mat1(cv::Rect(3, 0, 1, 3)) = cv::Mat_<double>(
+                            {cam1_data[3], cam1_data[4], cam1_data[5]});
+
+                        // Get the 2D observations of the point in both cameras.
+                        points0[0] =
+                            {observations_[2 * cam_observation[new_cam_pose_idx]
+                                                              [pt_idx]],
+                             observations_[2 * cam_observation[new_cam_pose_idx]
+                                                              [pt_idx] +
+                                           1]};
+                        points1[0] =
+                            {observations_[2 *
+                                           cam_observation[cam_idx][pt_idx]],
+                             observations_
+                                 [2 * cam_observation[cam_idx][pt_idx] + 1]};
+
+                        // Triangulate the point using the two camera poses.
+                        cv::triangulatePoints(proj_mat0, proj_mat1, points0, points1,
+                                              hpoints4D);
+
+                        // Check the cheirality constraint for both cameras.
+                        if (hpoints4D(2) / hpoints4D(3) > 0.0) {
+                            // Convert from homogeneous coordinates to Euclidean
+                            // coordinates.
+                            cv::Vec3d point(hpoints4D(0) / hpoints4D(3),
+                                            hpoints4D(1) / hpoints4D(3),
+                                            hpoints4D(2) / hpoints4D(3));
+
+                            // Update the 3D point in the optimization vector.
+                            n_new_pts++;
+                            pts_optim_iter_[pt_idx] = 1;
+                            double* pt = pointBlockPtr(pt_idx);
+                            pt[0] = point(0);
+                            pt[1] = point(1);
+                            pt[2] = point(2);
+                        }
+
+                        /////////////////////////////////////////////////////////////////////////////////////////
+                    }
+                }
+            }
+        }
+
+        cout << "ADDED " << n_new_pts << " new points" << endl;
+        cout << "Using " << iter + 2 << " over " << num_cam_poses_ << " cameras"
+             << endl;
+        for (int i = 0; i < int(cam_pose_optim_iter_.size()); i++)
+            cout << int(cam_pose_optim_iter_[i]) << " ";
+        cout << endl;
+
+        // Execute an iteration of bundle adjustment
+        bundleAdjustmentIter(new_cam_pose_idx);
+
+        // Reject outliers.
+        Eigen::Vector3d vol_min = Eigen::Vector3d::Constant(
+                            (std::numeric_limits<double>::max())),
+                        vol_max = Eigen::Vector3d::Constant(
+                            (-std::numeric_limits<double>::max()));
+        for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
+            if (cam_pose_optim_iter_[i_c]) {
+                double* camera = cameraBlockPtr(i_c);
+                if (camera[3] > vol_max(0)) vol_max(0) = camera[3];
+                if (camera[4] > vol_max(1)) vol_max(1) = camera[4];
+                if (camera[5] > vol_max(2)) vol_max(2) = camera[5];
+                if (camera[3] < vol_min(0)) vol_min(0) = camera[3];
+                if (camera[4] < vol_min(1)) vol_min(1) = camera[4];
+                if (camera[5] < vol_min(2)) vol_min(2) = camera[5];
+            }
+        }
+        double max_dist = 5 * (vol_max - vol_min).norm();
+        if (max_dist < 10.0) max_dist = 10.0;
+
+        double* pts = parameters_.data() + num_cam_poses_ * camera_block_size_;
+        int n_outliers = 0;
+        for (int i = 0; i < num_points_; i++) {
+            if (pts_optim_iter_[i] > 0 &&
+                (fabs(pts[i * point_block_size_]) > max_dist ||
+                 fabs(pts[i * point_block_size_ + 1]) > max_dist ||
+                 fabs(pts[i * point_block_size_ + 2]) > max_dist)) {
+                pts_optim_iter_[i] = -1;
+                n_outliers++;
+            }
+        }
+        std::cout << "-----------------> REJECTED " << n_outliers
+                  << " outliers" << std::endl;
+    }
+}
+
+void BasicSfM::bundleAdjustmentIter(int new_cam_idx) {
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.minimizer_progress_to_stdout = false;
+    options.logging_type = ceres::SILENT;
+    options.num_threads = 4;
+    options.max_num_iterations = 200;
+
+    std::vector<double> bck_parameters;
+
+    bool keep_optimize = true;
+
+    // Global optimization.
+    while (keep_optimize) {
+        bck_parameters = parameters_;
+        ceres::Problem problem;
+        ceres::Solver::Summary summary;
+
+        // For each observation....
+        for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
+            //.. check if this observation has bem already registered (both
+            // checking camera pose and point pose).
+            if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
+                pts_optim_iter_[point_index_[i_obs]] > 0) {
+                //////////////////////////// Code to be completed (6/6) ////////////////////////////////////
+                //... in case, add a residual block inside the Ceres solver
+                // problem.
+                // You should define a suitable functor (i.e., see the
+                // ReprojectionError struct at the beginning of this file)
+                // You may try a Cauchy loss function with parameters, say,
+                // 2*max_reproj_err_. Remember that the parameter blocks are
+                // stored starting from the parameters_.data() double*
+                // pointer. The camera position blocks have size
+                // (camera_block_size_) of 6 elements, while the point
+                // position blocks have size (point_block_size_) of 3
+                // elements.
+                //////////////////////////////////////////////////////////////////////////////////
+
+                ceres::CostFunction* cost_function = ReprojectionError::Create(observations_[2 * i_obs],
+                                                                               observations_[2 * i_obs + 1]);
+                problem.AddResidualBlock(
+                    cost_function, new ceres::CauchyLoss(2 * max_reproj_err_),
+                    cameraBlockPtr(cam_pose_index_[i_obs]),
+                    pointBlockPtr(point_index_[i_obs]));
+
+                /////////////////////////////////////////////////////////////////////////////////////////
+            }
+        }
+
+        Solve(options, &problem, &summary);
+        std::cout << "Bundle Adjustment iteration report:\n"
+                  << summary.FullReport() << "\n";
+
+        // WARNING: poor optimization ... :(
+        // Check the cheirality constraint.
+        int n_cheirality_violation = 0;
+        for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
+            if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
+                pts_optim_iter_[point_index_[i_obs]] == 1 &&
+                !checkCheiralityConstraint(cam_pose_index_[i_obs],
+                                           point_index_[i_obs])) {
+                // Penalize the point..
+                pts_optim_iter_[point_index_[i_obs]] -= 2;
+                n_cheirality_violation++;
+            }
+        }
+
+        int n_outliers;
+        if (n_cheirality_violation > max_outliers_) {
+            std::cout << "****************** OPTIM CHEIRALITY VIOLATION for "
+                      << n_cheirality_violation << " points : redoing optim!!"
+                      << std::endl;
+            parameters_ = bck_parameters;
+        } else if ((n_outliers = rejectOuliers()) > max_outliers_) {
+            std::cout << "****************** OPTIM FOUND " << n_outliers
+                      << " OUTLIERS : redoing optim!!" << std::endl;
+            parameters_ = bck_parameters;
+        } else {
+            std::cout << "****************** OPTIM DONE" << std::endl;
+            keep_optimize = false;
+        }
+    }
+
+    printPose(new_cam_idx);
+}
+
+int BasicSfM::rejectOuliers() {
+    int num_ouliers = 0;
+    for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
+        if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
+            pts_optim_iter_[point_index_[i_obs]] > 0) {
+            double *camera = cameraBlockPtr(cam_pose_index_[i_obs]),
+                   *point = pointBlockPtr(point_index_[i_obs]),
+                   *observation = observations_.data() + (i_obs * 2);
+
+            double p[3];
+            ceres::AngleAxisRotatePoint(camera, point, p);
+
+            // camera[3,4,5] are the translation.
+            p[0] += camera[3];
+            p[1] += camera[4];
+            p[2] += camera[5];
+
+            double predicted_x = p[0] / p[2];
+            double predicted_y = p[1] / p[2];
+
+            if (fabs(predicted_x - observation[0]) > max_reproj_err_ ||
+                fabs(predicted_y - observation[1]) > max_reproj_err_) {
+                // Penalize the point.
+                pts_optim_iter_[point_index_[i_obs]] -= 2;
+                num_ouliers++;
+            }
+        }
+    }
+    return num_ouliers;
 }
 
 void BasicSfM::writeToFile(const string& filename,
@@ -328,7 +969,7 @@ bool BasicSfM::checkCheiralityConstraint(int pos_idx, int pt_idx) {
     double p[3];
     ceres::AngleAxisRotatePoint(camera, point, p);
 
-    // camera[5] is the z cooordinate wrt the camera at pose pose_idx
+    // camera[5] is the z coordinate wrt the camera at pose pose_idx.
     p[2] += camera[5];
     return p[2] > 0;
 }
@@ -351,373 +992,6 @@ void BasicSfM::printPointParams(int idx) const {
               << pt[2] << ")" << std::endl;
 }
 
-void BasicSfM::solve() {
-    // Canonical camera so identity K
-    cv::Mat_<double> intrinsics_matrix = cv::Mat_<double>::eye(3, 3);
-
-    // For each camera pose, prepare a map that reports the pairs [point index,
-    // observation index] This map is used to quickly retrieve the observation
-    // index given a 3D point index For instance, to query if the camera pose
-    // with index i_cam observed the 3D point with index i_pt, check if
-    // cam_observation[i_cam].find( i_pt ) is not cam_observation[i_cam].end(),
-    // i.e.,: if(cam_observation[i_cam].find( i_pt ) !=
-    // cam_observation[i_cam].end())  { .... } In case of success, you can
-    // retrieve the observation index obs_id simply with: obs_id =
-    // cam_observation[i_cam][i_pt]
-    vector<map<int, int> > cam_observation(num_cam_poses_);
-    for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
-        int i_cam = cam_pose_index_[i_obs], i_pt = point_index_[i_obs];
-        cam_observation[i_cam][i_pt] = i_obs;
-    }
-
-    // Compute a (symmetric) num_cam_poses_ X num_cam_poses_ matrix
-    // that counts the number of correspondences between pairs of camera poses
-    Eigen::MatrixXi corr =
-        Eigen::MatrixXi::Zero(num_cam_poses_, num_cam_poses_);
-
-    for (int r = 0; r < num_cam_poses_; r++) {
-        for (int c = r + 1; c < num_cam_poses_; c++) {
-            int nc = 0;
-            for (auto const& co_iter : cam_observation[r]) {
-                if (cam_observation[c].find(co_iter.first) !=
-                    cam_observation[c].end())
-                    nc++;
-            }
-            corr(r, c) = nc;
-        }
-    }
-
-    // num_cam_poses_ X num_cam_poses_ matrix to mask already tested seed pairs
-    // already_tested_pair(r,c) == 0 -> not tested pair
-    // already_tested_pair(r,c) != 0 -> already tested pair
-    Eigen::MatrixXi already_tested_pair =
-        Eigen::MatrixXi::Zero(num_cam_poses_, num_cam_poses_);
-
-    // From the correspondence matrix corr select a seed pair of poses that both
-    // a) maximize the number of correspondences b) define an Essential Matrix
-    // as geometrical model c) define a "good" translation
-    bool seed_found = false;
-    // Indices of the two camera poses that define the initial seed pair
-    // (default
-    int ref_cam_pose_idx, new_cam_pose_idx;
-    // Init R,t between the seed pair
-    cv::Mat init_r_mat, init_r_vec, init_t_vec;
-
-    std::vector<cv::Point2d> points0, points1;
-    cv::Mat inlier_mask_E, inlier_mask_H;
-
-    while (!seed_found) {
-        points0.clear();
-        points1.clear();
-
-        int max_corr = -1;
-        for (int r = 0; r < num_cam_poses_; r++) {
-            for (int c = r + 1; c < num_cam_poses_; c++) {
-                if (!already_tested_pair(r, c) && corr(r, c) > max_corr) {
-                    max_corr = corr(r, c);
-                    ref_cam_pose_idx = r;
-                    new_cam_pose_idx = c;
-                }
-            }
-        }
-
-        if (max_corr < 0) {
-            std::cout << "No seed pair found, exiting" << std::endl;
-            return;
-        }
-        already_tested_pair(ref_cam_pose_idx, new_cam_pose_idx) = 1;
-
-        for (auto const& co_iter : cam_observation[ref_cam_pose_idx]) {
-            if (cam_observation[new_cam_pose_idx].find(co_iter.first) !=
-                cam_observation[new_cam_pose_idx].end()) {
-                points0.emplace_back(observations_[2 * co_iter.second],
-                                     observations_[2 * co_iter.second + 1]);
-                points1.emplace_back(
-                    observations_[2 * cam_observation[new_cam_pose_idx]
-                                                     [co_iter.first]],
-                    observations_[2 * cam_observation[new_cam_pose_idx]
-                                                     [co_iter.first] +
-                                  1]);
-            }
-        }
-
-        //////////////////////////// Code to be completed (3/6)
-        ////////////////////////////////////
-        // Extract both Essential matrix E and Homograph matrix H.
-        // Check that the number of inliers for the model E is higher than the
-        // number of inliers for the model H (-> use inlier_mask_E and
-        // inlier_mask_H defined above <-). As threshold in the functions to
-        // estimate both models, you may use 0.001 or similar. If true, recover
-        // from E the initial rigid body transformation between ref_cam_pose_idx
-        // and new_cam_pose_idx by using the cv::recoverPose() OpenCV function
-        // (use inlier_mask_E as input/output param) Check if the recovered
-        // transformation is mainly given by a sideward motion, which is better
-        // than forward one. Store the transformation into init_r_mat and
-        // init_t_vec; defined above and set the seed_found flag to true
-        // Otherwise, test a different [ref_cam_pose_idx, new_cam_pose_idx] pair
-        // (while( !seed_found ) loop) The dummy condition here:
-
-        //---> if (true) seed_found = true;
-
-        // should be replaced with the criteria described above
-        /////////////////////////////////////////////////////////////////////////////////////////
-        cv::Mat H = cv::findHomography(points0, points1, cv::RANSAC, 3,
-                               inlier_mask_H);
-        cv::Mat E = cv::findEssentialMat(points0, points1, intrinsics_matrix,
-                                 cv::RANSAC, 0.999, 1.0, inlier_mask_E);
-        int diff = 0;
-        for(int id_match = 0; id_match < points0.size(); id_match++){
-                if(inlier_mask_E.at<uchar>(id_match)){
-                    ++diff;
-                                }
-                if(inlier_mask_H.at<uchar>(id_match)){
-                    --diff;
-                                }
-            }
-        if(diff < 0) continue;
-        // int n_good = cv::recoverPose(E, points0, points1,intrinsic_matrix,init_r_mat,init_t_vec);
-        // cv::Rodrigues(init_r_mat,init_r_vec);
-        
-
-        /////////////////////////////////////////////////////////////////////////////////////////
-    }
-
-    // Initialize the first optimized poses, by integrating them into the
-    // registration cam_pose_optim_iter_ and pts_optim_iter_ are simple mask
-    // vectors that define which camera poses and which point positions have
-    // been already registered, specifically if cam_pose_optim_iter_[pos_id] or
-    // pts_optim_iter_[id] are: > 0 ---> The corresponding pose or point
-    // position has been already been estimated
-    // == 0 ---> The corresponding pose or point position has not yet been
-    // estimated
-    // == -1 ---> The corresponding pose or point position has been rejected due
-    // to e.g. outliers, etc...
-    cam_pose_optim_iter_[ref_cam_pose_idx] =
-        cam_pose_optim_iter_[new_cam_pose_idx] = 1;
-
-    // Initialize the first RT wrt the reference position
-    cv::Mat r_vec;
-    // Recover the axis-angle rotation from init_r_mat
-    cv::Rodrigues(init_r_mat, r_vec);
-
-    // And update the parameters_ vector
-    // First camera pose of the seed pair: just the identity transformation for
-    // now
-    cv::Mat_<double> ref_rt_vec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
-    initCamParams(ref_cam_pose_idx, ref_rt_vec, ref_rt_vec);
-    // Second camera pose of the seed pair: the just recovered transformation
-    initCamParams(new_cam_pose_idx, r_vec, init_t_vec);
-
-    printPose(ref_cam_pose_idx);
-    printPose(new_cam_pose_idx);
-
-    // Triangulate the 3D points observed by both cameras
-    cv::Mat_<double> proj_mat0 = cv::Mat_<double>::zeros(3, 4), proj_mat1(3, 4),
-                     hpoints4D;
-    // First camera pose of the seed pair: just the identity transformation for
-    // now
-    proj_mat0(0, 0) = proj_mat0(1, 1) = proj_mat0(2, 2) = 1.0;
-    // Second camera pose of the seed pair: the just recovered transformation
-    init_r_mat.copyTo(proj_mat1(cv::Rect(0, 0, 3, 3)));
-    init_t_vec.copyTo(proj_mat1(cv::Rect(3, 0, 1, 3)));
-
-    cv::triangulatePoints(proj_mat0, proj_mat1, points0, points1, hpoints4D);
-
-    int r = 0;
-    // Initialize the first optimized points
-    for (auto const& co_iter : cam_observation[ref_cam_pose_idx]) {
-        auto& pt_idx = co_iter.first;
-        if (cam_observation[new_cam_pose_idx].find(pt_idx) !=
-            cam_observation[new_cam_pose_idx].end()) {
-            if (inlier_mask_E.at<unsigned char>(r)) {
-                // Initialize the new point into the optimization
-                double* pt = pointBlockPtr(pt_idx);
-
-                // H-normalize the point
-                pt[0] = hpoints4D.at<double>(0, r) / hpoints4D.at<double>(3, r);
-                pt[1] = hpoints4D.at<double>(1, r) / hpoints4D.at<double>(3, r);
-                pt[2] = hpoints4D.at<double>(2, r) / hpoints4D.at<double>(3, r);
-
-                // Check the cheirality constraint
-                if (pt[2] > 0.0) {
-                    // Try to reproject the estimated 3D point in both cameras
-                    cv::Mat_<double> pt_3d =
-                        (cv::Mat_<double>(3, 1) << pt[0], pt[1], pt[2]);
-
-                    pt_3d = init_r_mat * pt_3d + init_t_vec;
-
-                    cv::Point2d p0(pt[0] / pt[2], pt[1] / pt[2]),
-                        p1(pt_3d(0, 0) / pt_3d(2, 0),
-                           pt_3d(1, 0) / pt_3d(2, 0));
-
-                    // If the reprojection error is small, add the point to the
-                    // reconstruction
-                    if (cv::norm(p0 - points0[r]) < max_reproj_err_ &&
-                        cv::norm(p1 - points1[r]) < max_reproj_err_)
-                        pts_optim_iter_[pt_idx] = 1;
-                    else
-                        pts_optim_iter_[pt_idx] = -1;
-                }
-            }
-        }
-        r++;
-    }
-
-    // First bundle adjustment iteration: here we have only two camera poses,
-    // i.e., the seed pair
-    bundleAdjustmentIter(new_cam_pose_idx);
-
-    // Start to register new poses and observations...
-    for (int iter = 1; iter < num_cam_poses_ - 1; iter++) {
-        // The vector n_init_pts stores the number of points already being
-        // optimized that are projected in a new camera pose when is optimized
-        // for the first time
-        std::vector<int> n_init_pts(num_cam_poses_, 0);
-        int max_init_pts = -1;
-
-        // Select the new camera (new_cam_pose_idx) to be included in the
-        // optimization as the one that has more projected points in common with
-        // the cameras already included in the optimization
-        for (int i_p = 0; i_p < num_points_; i_p++) {
-            if (pts_optim_iter_[i_p] > 0)  // Point already added
-            {
-                for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
-                    if (cam_pose_optim_iter_[i_c] ==
-                            0 &&  // New camera pose not yet registered
-                        cam_observation[i_c].find(i_p) !=
-                            cam_observation[i_c]
-                                .end())  // Dees camera i_c see this 3D point?
-                        n_init_pts[i_c]++;
-                }
-            }
-        }
-
-        // Select the new camera pose that see more already registered 3D points
-        for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
-            if (cam_pose_optim_iter_[i_c] == 0 &&
-                n_init_pts[i_c] > max_init_pts) {
-                max_init_pts = n_init_pts[i_c];
-                new_cam_pose_idx = i_c;
-            }
-        }
-
-        // Now new_cam_pose_idx is the index of the next camera pose to be
-        // registered Extract the 3D points that are projected in the
-        // new_cam_pose_idx-th pose and that are already registered
-        std::vector<cv::Point3d> scene_pts;
-        std::vector<cv::Point2d> img_pts;
-        for (int i_p = 0; i_p < num_points_; i_p++) {
-            if (pts_optim_iter_[i_p] > 0 &&
-                cam_observation[new_cam_pose_idx].find(i_p) !=
-                    cam_observation[new_cam_pose_idx].end()) {
-                double* pt = pointBlockPtr(i_p);
-                scene_pts.emplace_back(pt[0], pt[1], pt[2]);
-                img_pts.emplace_back(
-                    observations_[cam_observation[new_cam_pose_idx][i_p] * 2],
-                    observations_[cam_observation[new_cam_pose_idx][i_p] * 2 +
-                                  1]);
-            }
-        }
-        if (scene_pts.size() <= 3) {
-            std::cout << "No other positions can be optimized, exiting"
-                      << std::endl;
-            return;
-        }
-
-        // Estimate an initial R,t by using PnP + RANSAC
-        cv::solvePnPRansac(scene_pts, img_pts, intrinsics_matrix, cv::Mat(),
-                           init_r_vec, init_t_vec, false, 100, max_reproj_err_);
-        // ... and add to the pool of optimized camera positions
-        initCamParams(new_cam_pose_idx, init_r_vec, init_t_vec);
-        cam_pose_optim_iter_[new_cam_pose_idx] = 1;
-
-        // Extract the new points that, thanks to the new camera, are going to
-        // be optimized
-        int n_new_pts = 0;
-        std::vector<cv::Point2d> points0(1), points1(1);
-        cv::Mat_<double> proj_mat0(3, 4), proj_mat1(3, 4), hpoints4D;
-        for (int cam_idx = 0; cam_idx < num_cam_poses_; cam_idx++) {
-            if (cam_pose_optim_iter_[cam_idx] > 0) {
-                for (auto const& co_iter : cam_observation[cam_idx]) {
-                    auto& pt_idx = co_iter.first;
-                    if (pts_optim_iter_[pt_idx] == 0 &&
-                        cam_observation[new_cam_pose_idx].find(pt_idx) !=
-                            cam_observation[new_cam_pose_idx].end()) {
-                        double *cam0_data = cameraBlockPtr(new_cam_pose_idx),
-                               *cam1_data = cameraBlockPtr(cam_idx);
-
-                        //////////////////////////// Code to be completed (4/6)
-                        ////////////////////////////////////
-                        // Triangulate the 3D point with index pt_idx by using
-                        // the observation of this point in the camera poses
-                        // with indices new_cam_pose_idx and cam_idx. The
-                        // pointers cam0_data and cam1_data point to the 6D pose
-                        // blocks for these inside the parameters vector (e.g.,
-                        // cam0_data[0], cam0_data[1], cam0_data[2] hold the
-                        // axis-angle representation fo the rotation of the
-                        // camera with index new_cam_pose_idx.
-                        // Use the OpenCV cv::triangulatePoints() function,
-                        // remembering to check the cheirality constraint for
-                        // both cameras In case of success (cheirality constrant
-                        // satisfied) execute the following instructions
-                        // (decomment e cut&paste):
-
-                        // n_new_pts++;
-                        // pts_optim_iter_[pt_idx] = 1;
-                        // double *pt = pointBlockPtr(pt_idx);
-                        // pt[0] = /*X coordinate of the estimated point */;
-                        // pt[1] = /*X coordinate of the estimated point */;
-                        // pt[2] = /*X coordinate of the estimated point */;
-                        /////////////////////////////////////////////////////////////////////////////////////////
-
-                        /////////////////////////////////////////////////////////////////////////////////////////
-                    }
-                }
-            }
-        }
-
-        cout << "ADDED " << n_new_pts << " new points" << endl;
-
-        cout << "Using " << iter + 2 << " over " << num_cam_poses_ << " cameras"
-             << endl;
-        for (int i = 0; i < int(cam_pose_optim_iter_.size()); i++)
-            cout << int(cam_pose_optim_iter_[i]) << " ";
-        cout << endl;
-
-        // Execute an iteration of bundle adjustment
-        bundleAdjustmentIter(new_cam_pose_idx);
-
-        Eigen::Vector3d vol_min = Eigen::Vector3d::Constant(
-                            (std::numeric_limits<double>::max())),
-                        vol_max = Eigen::Vector3d::Constant(
-                            (-std::numeric_limits<double>::max()));
-        for (int i_c = 0; i_c < num_cam_poses_; i_c++) {
-            if (cam_pose_optim_iter_[i_c]) {
-                double* camera = cameraBlockPtr(i_c);
-                if (camera[3] > vol_max(0)) vol_max(0) = camera[3];
-                if (camera[4] > vol_max(1)) vol_max(1) = camera[4];
-                if (camera[5] > vol_max(2)) vol_max(2) = camera[5];
-                if (camera[3] < vol_min(0)) vol_min(0) = camera[3];
-                if (camera[4] < vol_min(1)) vol_min(1) = camera[4];
-                if (camera[5] < vol_min(2)) vol_min(2) = camera[5];
-            }
-        }
-
-        double max_dist = 5 * (vol_max - vol_min).norm();
-        if (max_dist < 10.0) max_dist = 10.0;
-
-        double* pts = parameters_.data() + num_cam_poses_ * camera_block_size_;
-        for (int i = 0; i < num_points_; i++) {
-            if (pts_optim_iter_[i] > 0 &&
-                (fabs(pts[i * point_block_size_]) > max_dist ||
-                 fabs(pts[i * point_block_size_ + 1]) > max_dist ||
-                 fabs(pts[i * point_block_size_ + 2]) > max_dist)) {
-                pts_optim_iter_[i] = -1;
-            }
-        }
-    }
-}
-
 void BasicSfM::initCamParams(int new_pose_idx, cv::Mat r_vec, cv::Mat t_vec) {
     double* camera = cameraBlockPtr(new_pose_idx);
 
@@ -726,109 +1000,4 @@ void BasicSfM::initCamParams(int new_pose_idx, cv::Mat r_vec, cv::Mat t_vec) {
         camera[r] = r_vec_d(r, 0);
         camera[r + 3] = t_vec_d(r, 0);
     }
-}
-
-void BasicSfM::bundleAdjustmentIter(int new_cam_idx) {
-    ceres::Solver::Options options;
-    options.linear_solver_type = ceres::DENSE_SCHUR;
-    options.minimizer_progress_to_stdout = false;
-    options.num_threads = 4;
-    options.max_num_iterations = 200;
-
-    std::vector<double> bck_parameters;
-
-    bool keep_optimize = true;
-
-    // Global optimization
-    while (keep_optimize) {
-        bck_parameters = parameters_;
-        ceres::Problem problem;
-        ceres::Solver::Summary summary;
-
-        // For each observation....
-        for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
-            //.. check if this observation has bem already registered (both
-            // checking camera pose and point pose)
-            if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
-                pts_optim_iter_[point_index_[i_obs]] > 0) {
-                //////////////////////////// Code to be completed (6/6)
-                ////////////////////////////////////
-                //... in case, add a residual block inside the Ceres solver
-                // problem.
-                // You should define a suitable functor (i.e., see the
-                // ReprojectionError struct at the beginning of this file) You
-                // may try a Cauchy loss function with parameters, say,
-                // 2*max_reproj_err_ Remember that the parameter blocks are
-                // stored starting from the parameters_.data() double* pointer.
-                // The camera position blocks have size (camera_block_size_) of
-                // 6 elements, while the point position blocks have size
-                // (point_block_size_) of 3 elements.
-                //////////////////////////////////////////////////////////////////////////////////
-
-                /////////////////////////////////////////////////////////////////////////////////////////
-            }
-        }
-
-        Solve(options, &problem, &summary);
-
-        // WARNING Here poor optimization ... :(
-        // CHeck the cheirality constraint
-        int n_cheirality_violation = 0;
-        for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
-            if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
-                pts_optim_iter_[point_index_[i_obs]] == 1 &&
-                !checkCheiralityConstraint(cam_pose_index_[i_obs],
-                                           point_index_[i_obs])) {
-                // Penalize the point..
-                pts_optim_iter_[point_index_[i_obs]] -= 2;
-                n_cheirality_violation++;
-            }
-        }
-
-        int n_outliers;
-        if (n_cheirality_violation > max_outliers_) {
-            std::cout << "****************** OPTIM CHEIRALITY VIOLATION for "
-                      << n_cheirality_violation << " points : redoing optim!!"
-                      << std::endl;
-            parameters_ = bck_parameters;
-        } else if ((n_outliers = rejectOuliers()) > max_outliers_) {
-            std::cout << "****************** OPTIM FOUND " << n_outliers
-                      << " OUTLIERS : redoing optim!!" << std::endl;
-            parameters_ = bck_parameters;
-        } else
-            keep_optimize = false;
-    }
-
-    printPose(new_cam_idx);
-}
-
-int BasicSfM::rejectOuliers() {
-    int num_ouliers = 0;
-    for (int i_obs = 0; i_obs < num_observations_; i_obs++) {
-        if (cam_pose_optim_iter_[cam_pose_index_[i_obs]] > 0 &&
-            pts_optim_iter_[point_index_[i_obs]] > 0) {
-            double *camera = cameraBlockPtr(cam_pose_index_[i_obs]),
-                   *point = pointBlockPtr(point_index_[i_obs]),
-                   *observation = observations_.data() + (i_obs * 2);
-
-            double p[3];
-            ceres::AngleAxisRotatePoint(camera, point, p);
-
-            // camera[3,4,5] are the translation.
-            p[0] += camera[3];
-            p[1] += camera[4];
-            p[2] += camera[5];
-
-            double predicted_x = p[0] / p[2];
-            double predicted_y = p[1] / p[2];
-
-            if (fabs(predicted_x - observation[0]) > max_reproj_err_ ||
-                fabs(predicted_y - observation[1]) > max_reproj_err_) {
-                // Penalize the point
-                pts_optim_iter_[point_index_[i_obs]] -= 2;
-                num_ouliers++;
-            }
-        }
-    }
-    return num_ouliers;
 }

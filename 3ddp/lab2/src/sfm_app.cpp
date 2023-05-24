@@ -6,7 +6,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        std::cout << "Usage : " << argv[0]
+        std::cout << "Usage: " << argv[0]
                   << " <input data file> <output ply file>" << std::endl;
         return 0;
     }
