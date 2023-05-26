@@ -1,5 +1,6 @@
 #ifndef MVS_REG_REGISTRATION_H
 #define MVS_REG_REGISTRATION_H
+
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
 
@@ -29,7 +30,7 @@ class Registration {
    private:
     std::tuple<std::vector<size_t>, std::vector<size_t>, double>
     find_closest_point(double threshold);
-    Eigen::Matrix4d get_svd_icp_transformation(
+    Eigen::Matrix4d get_svd_icp_registration(
         std::vector<size_t> source_indices, std::vector<size_t> target_indices);
     Eigen::Matrix4d get_lm_icp_registration(std::vector<size_t> source_indices,
                                             std::vector<size_t> target_indices);
