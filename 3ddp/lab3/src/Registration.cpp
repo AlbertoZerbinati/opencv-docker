@@ -80,9 +80,8 @@ void Registration::execute_icp_registration(double threshold, int max_iteration,
             transformation_matrix = get_lm_icp_registration(
                 std::get<0>(matches_and_error), std::get<1>(matches_and_error));
         }
-        // Update transformation matrix and source points.
-        transformation_ = transformation_matrix;
-        source_for_icp_.Transform(transformation_matrix);
+        // Update transformation.
+        transformation_ = transformation_ * transformation_matrix;
 
         // Check convergence.
         double rmse = std::get<2>(matches_and_error);
@@ -117,7 +116,9 @@ Registration::find_closest_point(double threshold) {
     std::vector<int> idx(1);
     std::vector<double> dist2(1);
 
-    open3d::geometry::PointCloud source_clone = source_for_icp_;
+    // Use the currently available transformation of the source.
+    open3d::geometry::PointCloud source_clone = source_;
+    source_clone.Transform(transformation_);
     int num_source_points = source_clone.points_.size();
 
     int num_matches = 0;
@@ -155,7 +156,9 @@ Eigen::Matrix4d Registration::get_svd_icp_registration(
     ///////////////////////////////////////////////////////////////////////////
     Eigen::Matrix4d transformation = Eigen::Matrix4d::Identity(4, 4);
 
-    open3d::geometry::PointCloud source_clone = source_for_icp_;
+    // Use the currently available transformation of the source.
+    open3d::geometry::PointCloud source_clone = source_;
+    source_clone.Transform(transformation_);
     open3d::geometry::PointCloud target_clone = target_;
 
     // Compute centroids.
@@ -269,9 +272,7 @@ void Registration::save_merged_cloud(std::string filename) {
     target_clone.PaintUniformColor(color_t);
     source_clone.PaintUniformColor(color_s);
 
-    std::cout << "source points: " << source_clone.points_[0] << std::endl;
     source_clone.Transform(transformation_);
-    std::cout << "source points: " << source_clone.points_[0] << std::endl;
 
     open3d::geometry::PointCloud merged = target_clone + source_clone;
     open3d::io::WritePointCloud(filename, merged);
