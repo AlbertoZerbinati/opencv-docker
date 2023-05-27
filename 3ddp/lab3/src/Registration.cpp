@@ -40,7 +40,7 @@ struct PointDistance {
         return true;  // Success
     }
 
-    // Create method
+    // Create method.
     static ceres::CostFunction* Create(const Eigen::Vector3d model,
                                        const Eigen::Vector3d data) {
         return (new ceres::AutoDiffCostFunction<PointDistance, 3, 6>(
@@ -104,10 +104,30 @@ void Registration::execute_icp_registration(double threshold, int max_iteration,
     // Store the previous rmse to check convergence.
     double prev_rmse = std::numeric_limits<double>::max();
 
+    // Store the previous transformation to restore it if the rmse increases.
+    Eigen::Matrix4d prev_transformation = transformation_;
+
     for (int i = 0; i < max_iteration; i++) {
+        std::cout << "\n\nIteration: " << i << std::endl;
+
         // Find matches and rmse.
         std::tuple<std::vector<size_t>, std::vector<size_t>, double>
             matches_and_error = find_closest_point(threshold);
+
+        // Check convergence.
+        double rmse = std::get<2>(matches_and_error);
+        std::cout << "RMSE: " << rmse << std::endl;
+        if (rmse > prev_rmse) {
+            // If rmse increased, restore previous transformation and break.
+            std::cout << "Converged!" << std::endl;
+            transformation_ = prev_transformation;
+            break;
+        } else if (std::abs(prev_rmse - rmse) < 1e-9 || rmse < relative_rmse) {
+            // If rmse is not changing or it is smaller than the threshold,
+            // break.
+            std::cout << "Converged!" << std::endl;
+            break;
+        }
 
         // Find transformation matrix based on the mode.
         Eigen::Matrix4d transformation_matrix;
@@ -118,22 +138,13 @@ void Registration::execute_icp_registration(double threshold, int max_iteration,
             transformation_matrix = get_lm_icp_registration(
                 std::get<0>(matches_and_error), std::get<1>(matches_and_error));
         }
-        // Update transformation.
-        transformation_ = transformation_ * transformation_matrix;
 
-        // Check convergence.
-        double rmse = std::get<2>(matches_and_error);
-        std::cout << "Iteration: " << i << " RMSE: " << rmse << std::endl;
-        if (rmse > prev_rmse || std::abs(prev_rmse - rmse) < 0.00000001 ||
-            rmse < relative_rmse) {
-            std::cout << "Converged!" << std::endl;
-            break;
-        }
+        // Update transformation.
+        prev_transformation = transformation_;
+        set_transformation(transformation_ * transformation_matrix);
+
         prev_rmse = rmse;
     }
-
-    // Update source_ with the transformed points.
-    source_ = source_for_icp_;
 
     return;
 }
@@ -178,7 +189,7 @@ Registration::find_closest_point(double threshold) {
     }
 
     std::cout << "--------> matched " << num_matches << "/" << num_source_points
-              << " source points. \n\n";
+              << " source points" << std::endl;
 
     return {source_indices, target_indices, sqrt(mse)};
 }
