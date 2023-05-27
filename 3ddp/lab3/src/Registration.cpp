@@ -3,15 +3,53 @@
 struct PointDistance {
     ///////////////////////////////////////////////////////////////////////////
     // This class should include an auto-differentiable cost function.
-    // To rotate a point given an axis-angle rotation, use
-    // the Ceres function:
+    // To rotate a point given an axis-angle rotation, use the Ceres function:
     // AngleAxisRotatePoint(...) (see ceres/rotation.h)
     // Similarly to the Bundle Adjustment case initialize the struct variables
-    // with the source and  the target point. You have to optimize only the
-    // 6-dimensional array (rx, ry, rz, tx ,ty, tz). WARNING: When dealing with
-    // the AutoDiffCostFunction template parameters, pay attention to the order
-    // of the template parameters
+    // with the source and the target point. You have to optimize only the
+    // 6-dimensional array (rx, ry, rz, tx ,ty, tz).
+    // WARNING: When dealing with the AutoDiffCostFunction template parameters,
+    // pay attention to the order of the template parameters
     ///////////////////////////////////////////////////////////////////////////
+
+   public:
+    // Initialize class variables.
+    PointDistance(Eigen::Vector3d model, Eigen::Vector3d data)
+        : model(model), data(data) {}
+
+    // Compute the residual of the error function given the current
+    // transformation.
+    template <typename T>
+    bool operator()(const T* const transformation, T* residual) const {
+        // Rotate the source point using the transformation.
+        Eigen::Matrix<T, 3, 1> source;
+        source << T(this->data[0]), T(this->data[1]), T(this->data[2]);
+        Eigen::Matrix<T, 3, 1> rotated_data;
+        ceres::AngleAxisRotatePoint(transformation, source.data(),
+                                    rotated_data.data());
+
+        // Add the translation.
+        rotated_data += Eigen::Matrix<T, 3, 1>(
+            transformation[3], transformation[4], transformation[5]);
+
+        // Compute the residual.
+        residual[0] = rotated_data[0] - T(model[0]);
+        residual[1] = rotated_data[1] - T(model[1]);
+        residual[2] = rotated_data[2] - T(model[2]);
+
+        return true;  // Success
+    }
+
+    // Create method
+    static ceres::CostFunction* Create(const Eigen::Vector3d model,
+                                       const Eigen::Vector3d data) {
+        return (new ceres::AutoDiffCostFunction<PointDistance, 3, 6>(
+            new PointDistance(model, data)));
+    }
+
+   private:
+    Eigen::Vector3d model;
+    Eigen::Vector3d data;
 };
 
 Registration::Registration(std::string cloud_source_filename,
@@ -208,21 +246,57 @@ Eigen::Matrix4d Registration::get_lm_icp_registration(
     // Remember to convert the euler angles in a rotation matrix, store it
     // coupled with the final translation on: Eigen::Matrix4d transformation.
     // The first three elements of std::vector<double> transformation_arr
-    // represent the euler angles, the last ones the translation. use
+    // represent the euler angles, the last ones the translation. Use
     // source_indices and target_indices to extract point to compute the matrix
     // to be decomposed.
     ///////////////////////////////////////////////////////////////////////////
     Eigen::Matrix4d transformation = Eigen::Matrix4d::Identity(4, 4);
+
+    // Use the currently available transformation of the source.
+    open3d::geometry::PointCloud source_clone = source_;
+    source_clone.Transform(transformation_);
+    open3d::geometry::PointCloud target_clone = target_;
+
+    ceres::Problem problem;
+    ceres::Solver::Summary summary;
     ceres::Solver::Options options;
-    options.minimizer_progress_to_stdout = false;
+    options.minimizer_progress_to_stdout = true;
     options.num_threads = 4;
     options.max_num_iterations = 100;
 
     std::vector<double> transformation_arr(6, 0.0);
     int num_points = source_indices.size();
-    // For each point....
+
     for (int i = 0; i < num_points; i++) {
+        int source_index = source_indices[i];
+        int target_index = target_indices[i];
+        Eigen::Vector3d source_point = source_clone.points_[source_index];
+        Eigen::Vector3d target_point = target_clone.points_[target_index];
+
+        ceres::CostFunction* cost_function =
+            PointDistance::Create(target_point, source_point);
+        problem.AddResidualBlock(cost_function, nullptr,
+                                 transformation_arr.data());
     }
+
+    Solve(options, &problem, &summary);
+    // std::cout << "LM iteration report:\n" << summary.BriefReport() << "\n";
+
+    // Convert the euler angles into a rotation matrix.
+    Eigen::Matrix3d R = Eigen::Matrix3d::Identity(3, 3);
+    Eigen::AngleAxisd rollAngle(transformation_arr[0],
+                                Eigen::Vector3d::UnitX());
+    Eigen::AngleAxisd pitchAngle(transformation_arr[1],
+                                 Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd yawAngle(transformation_arr[2], Eigen::Vector3d::UnitZ());
+    R = yawAngle * pitchAngle * rollAngle;  // .toRotationMatrix()?;
+
+    Eigen::Vector3d t(transformation_arr[3], transformation_arr[4],
+                      transformation_arr[5]);
+
+    // Store the transformation.
+    transformation.block<3, 3>(0, 0) = R;
+    transformation.block<3, 1>(0, 3) = t;
 
     return transformation;
 }
