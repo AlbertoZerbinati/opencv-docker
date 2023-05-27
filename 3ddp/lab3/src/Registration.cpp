@@ -122,9 +122,8 @@ void Registration::execute_icp_registration(double threshold, int max_iteration,
             std::cout << "Converged!" << std::endl;
             transformation_ = prev_transformation;
             break;
-        } else if (std::abs(prev_rmse - rmse) < 1e-9 || rmse < relative_rmse) {
-            // If rmse is not changing or it is smaller than the threshold,
-            // break.
+        } else if (std::abs(prev_rmse - rmse) < relative_rmse) {
+            // If rmse is not changing significantly, break.
             std::cout << "Converged!" << std::endl;
             break;
         }
